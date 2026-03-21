@@ -1172,12 +1172,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Parse changed frontmatter fields
 		editedFields := parseIssueFrontmatter(editedContent)
-		// Find the original issue to compare against
+		// Find the original issue to compare against — if the issue was
+		// removed from the map while the editor was open (e.g., file reload),
+		// abort to avoid corrupting data by diffing against zero values.
 		var originalIssue model.Issue
 		if m.issueMap != nil {
 			if orig, ok := m.issueMap[msg.issueID]; ok {
 				originalIssue = *orig
+			} else {
+				m.statusMsg = fmt.Sprintf("❌ Issue %s no longer exists — changes not applied", msg.issueID)
+				m.statusIsError = true
+				return m, nil
 			}
+		} else {
+			m.statusMsg = "❌ Issue map not loaded — changes not applied"
+			m.statusIsError = true
+			return m, nil
 		}
 
 		// Check for description (body) changes
@@ -8020,7 +8030,7 @@ func exportIssueFrontmatter(issue model.Issue) string {
 		for i, l := range issue.Labels {
 			escapedLabels[i] = yamlEscapeString(l)
 		}
-		sb.WriteString(fmt.Sprintf("labels: [%s]\n", strings.Join(escapedLabels, ", ")))
+		sb.WriteString(fmt.Sprintf("# labels (read-only): [%s]\n", strings.Join(escapedLabels, ", ")))
 	}
 	sb.WriteString("---\n\n")
 	if issue.Description != "" {
@@ -8107,6 +8117,9 @@ func parseIssueFrontmatter(content string) map[string]string {
 }
 
 // parseBodyFromFrontmatter extracts the body text after the closing --- frontmatter delimiter.
+// Uses strings.TrimRight for trailing whitespace only, and strips at most two leading newlines
+// (the blank line between --- and body) to preserve significant leading whitespace in the
+// description (e.g., indented code blocks).
 func parseBodyFromFrontmatter(content string) string {
 	if !strings.HasPrefix(content, "---\n") {
 		return content
@@ -8116,7 +8129,11 @@ func parseBodyFromFrontmatter(content string) string {
 		return ""
 	}
 	body := content[4+endIdx+4:] // skip past "\n---"
-	return strings.TrimSpace(body)
+	// Strip the expected separator (1-2 newlines between closing --- and body)
+	// but preserve any further leading whitespace that may be significant.
+	body = strings.TrimLeft(body, "\n")
+	body = strings.TrimRight(body, " \t\n\r")
+	return body
 }
 
 // Stop cleans up resources (file watcher, instance lock, background worker, etc.)

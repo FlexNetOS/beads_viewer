@@ -1343,8 +1343,8 @@ func TestExportIssueFrontmatter(t *testing.T) {
 	if !strings.Contains(content, "type: feature\n") {
 		t.Fatalf("missing type in frontmatter: %s", content)
 	}
-	if !strings.Contains(content, "labels: [ui, editor]\n") {
-		t.Fatalf("missing labels in frontmatter: %s", content)
+	if !strings.Contains(content, "# labels (read-only): [ui, editor]\n") {
+		t.Fatalf("missing labels comment in frontmatter: %s", content)
 	}
 	if !strings.Contains(content, "Implement terminal editor support.") {
 		t.Fatalf("missing description body: %s", content)
