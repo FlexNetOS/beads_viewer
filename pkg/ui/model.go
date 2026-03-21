@@ -8070,12 +8070,30 @@ func parseIssueFrontmatter(content string) map[string]string {
 		}
 		key := strings.TrimSpace(line[:colonIdx])
 		value := strings.TrimSpace(line[colonIdx+1:])
-		// Strip surrounding quotes if present
+		// Strip surrounding quotes if present and unescape in a single pass
+		// to correctly handle sequences like \\n (literal backslash + n).
 		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
 			value = value[1 : len(value)-1]
-			value = strings.ReplaceAll(value, `\"`, `"`)
-			value = strings.ReplaceAll(value, `\\`, `\`)
-			value = strings.ReplaceAll(value, `\n`, "\n")
+			var unescaped strings.Builder
+			unescaped.Grow(len(value))
+			for i := 0; i < len(value); i++ {
+				if value[i] == '\\' && i+1 < len(value) {
+					switch value[i+1] {
+					case '\\':
+						unescaped.WriteByte('\\')
+					case '"':
+						unescaped.WriteByte('"')
+					case 'n':
+						unescaped.WriteByte('\n')
+					default:
+						unescaped.WriteByte(value[i+1])
+					}
+					i++ // skip the escaped character
+				} else {
+					unescaped.WriteByte(value[i])
+				}
+			}
+			value = unescaped.String()
 		}
 		if key != "" {
 			fields[key] = value
