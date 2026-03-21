@@ -8008,15 +8008,19 @@ func exportIssueFrontmatter(issue model.Issue) string {
 	sb.WriteString("---\n")
 	sb.WriteString(fmt.Sprintf("title: %s\n", yamlEscapeString(issue.Title)))
 	sb.WriteString(fmt.Sprintf("priority: %d\n", issue.Priority))
-	sb.WriteString(fmt.Sprintf("status: %s\n", string(issue.Status)))
+	sb.WriteString(fmt.Sprintf("status: %s\n", yamlEscapeString(string(issue.Status))))
 	if issue.Assignee != "" {
-		sb.WriteString(fmt.Sprintf("assignee: %s\n", issue.Assignee))
+		sb.WriteString(fmt.Sprintf("assignee: %s\n", yamlEscapeString(issue.Assignee)))
 	} else {
 		sb.WriteString("assignee:\n")
 	}
-	sb.WriteString(fmt.Sprintf("type: %s\n", string(issue.IssueType)))
+	sb.WriteString(fmt.Sprintf("type: %s\n", yamlEscapeString(string(issue.IssueType))))
 	if len(issue.Labels) > 0 {
-		sb.WriteString(fmt.Sprintf("labels: [%s]\n", strings.Join(issue.Labels, ", ")))
+		escapedLabels := make([]string, len(issue.Labels))
+		for i, l := range issue.Labels {
+			escapedLabels[i] = yamlEscapeString(l)
+		}
+		sb.WriteString(fmt.Sprintf("labels: [%s]\n", strings.Join(escapedLabels, ", ")))
 	}
 	sb.WriteString("---\n\n")
 	if issue.Description != "" {
