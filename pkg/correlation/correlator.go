@@ -159,8 +159,12 @@ func (c *Correlator) buildHistories(beads []BeadInfo, events []BeadEvent, commit
 
 	// Build complete histories
 	for beadID, history := range histories {
-		history.Events = eventsByBead[beadID]
-		history.Commits = dedupCommits(commitsByBead[beadID])
+		if events, ok := eventsByBead[beadID]; ok {
+			history.Events = events
+		}
+		if commits, ok := commitsByBead[beadID]; ok {
+			history.Commits = dedupCommits(commits)
+		}
 
 		// Calculate milestones
 		history.Milestones = GetBeadMilestones(history.Events)

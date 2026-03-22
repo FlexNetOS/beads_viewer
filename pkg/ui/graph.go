@@ -261,7 +261,7 @@ func (g *GraphModel) ScrollRight() {}
 func (g *GraphModel) ensureVisible() {}
 
 func (g *GraphModel) SelectedIssue() *model.Issue {
-	if len(g.sortedIDs) == 0 {
+	if len(g.sortedIDs) == 0 || g.selectedIdx < 0 || g.selectedIdx >= len(g.sortedIDs) {
 		return nil
 	}
 	id := g.sortedIDs[g.selectedIdx]
@@ -290,7 +290,7 @@ func (g *GraphModel) View(width, height int) string {
 	g.height = height
 	t := g.theme
 
-	if len(g.sortedIDs) == 0 {
+	if len(g.sortedIDs) == 0 || g.selectedIdx < 0 || g.selectedIdx >= len(g.sortedIDs) {
 		return t.Renderer.NewStyle().
 			Width(width).
 			Height(height).

@@ -2081,6 +2081,9 @@ func (r *LabelAttentionResult) GetLabelAttention(label string) *LabelAttentionSc
 // This enables trend analysis, anomaly detection, and forecasting.
 // Uses ClosedAt timestamps from issues to bucket closures into weeks.
 func ComputeHistoricalVelocity(issues []model.Issue, label string, numWeeks int, now time.Time) HistoricalVelocity {
+	if numWeeks <= 0 {
+		numWeeks = 8
+	}
 	result := HistoricalVelocity{
 		Label:          label,
 		WeeklyVelocity: make([]WeeklySnapshot, numWeeks),
@@ -2237,18 +2240,19 @@ func ComputeAllHistoricalVelocity(issues []model.Issue, numWeeks int, now time.T
 // GetVelocityTrend analyzes the historical velocity to detect trends
 // Returns "accelerating", "decelerating", "stable", or "erratic"
 func (hv *HistoricalVelocity) GetVelocityTrend() string {
-	if hv.WeeksAnalyzed < 4 {
+	n := len(hv.WeeklyVelocity)
+	if n < 4 {
 		return "insufficient_data"
 	}
 
 	// Compare first half vs second half of the period
-	halfPoint := hv.WeeksAnalyzed / 2
+	halfPoint := n / 2
 	var recentSum, olderSum int
 
 	for i := 0; i < halfPoint; i++ {
 		recentSum += hv.WeeklyVelocity[i].Closed
 	}
-	for i := halfPoint; i < hv.WeeksAnalyzed; i++ {
+	for i := halfPoint; i < n; i++ {
 		olderSum += hv.WeeklyVelocity[i].Closed
 	}
 

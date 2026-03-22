@@ -6915,6 +6915,9 @@ func (m *Model) updateViewportContent() {
 	if len(item.Comments) > 0 {
 		sb.WriteString(fmt.Sprintf("### Comments (%d)\n", len(item.Comments)))
 		for _, comment := range item.Comments {
+			if comment == nil {
+				continue
+			}
 			sb.WriteString(fmt.Sprintf("> **%s** (%s)\n> \n> %s\n\n",
 				comment.Author,
 				FormatTimeRel(comment.CreatedAt),

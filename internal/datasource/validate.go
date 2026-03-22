@@ -50,7 +50,7 @@ func ValidateSourceWithOptions(source *DataSource, opts ValidationOptions) error
 	if opts.Logger == nil {
 		opts.Logger = func(string) {}
 	}
-	if opts.MaxJSONLErrorRate == 0 {
+	if opts.MaxJSONLErrorRate < 0 {
 		opts.MaxJSONLErrorRate = 0.10
 	}
 	if len(opts.RequiredFields) == 0 {

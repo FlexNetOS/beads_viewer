@@ -308,6 +308,11 @@ func main() {
 		*robotBlockerChain != "" ||
 		*robotImpactNetwork != "" ||
 		*robotCausality != "" ||
+		*robotOrphans ||
+		*robotExplainCorrelation != "" ||
+		*robotConfirmCorrelation != "" ||
+		*robotRejectCorrelation != "" ||
+		*robotCorrelationStats ||
 		*robotSprintList ||
 		*robotSprintShow != "" ||
 		*robotForecast != "" ||
@@ -2604,14 +2609,23 @@ func main() {
 			if limit <= 0 || len(m) <= limit {
 				return m
 			}
-			trim := make(map[string]int, limit)
-			count := 0
+			type kv struct {
+				k string
+				v int
+			}
+			var items []kv
 			for k, v := range m {
-				trim[k] = v
-				count++
-				if count >= limit {
-					break
+				items = append(items, kv{k, v})
+			}
+			sort.Slice(items, func(i, j int) bool {
+				if items[i].v == items[j].v {
+					return items[i].k < items[j].k
 				}
+				return items[i].v > items[j].v
+			})
+			trim := make(map[string]int, limit)
+			for i := 0; i < limit; i++ {
+				trim[items[i].k] = items[i].v
 			}
 			return trim
 		}
@@ -4014,6 +4028,9 @@ func main() {
 		depGraph := make(map[string][]string)
 		for _, issue := range issues {
 			for _, dep := range issue.Dependencies {
+				if dep == nil {
+					continue
+				}
 				depGraph[issue.ID] = append(depGraph[issue.ID], dep.DependsOnID)
 			}
 		}
@@ -4105,6 +4122,11 @@ func main() {
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting current directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := correlation.ValidateRepository(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -5939,9 +5961,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
 
 	_, err = io.Copy(dstFile, srcFile)
+	if closeErr := dstFile.Close(); err == nil {
+		err = closeErr
+	}
 	return err
 }
 
@@ -7415,13 +7439,16 @@ func generateHistoryForExport(issues []model.Issue) (*TimeTravelHistory, error) 
 	// Convert map to sorted slice
 	var commits []TimeTravelCommit
 	for _, commit := range commitMap {
-		// Deduplicate beads_added
+		// Deduplicate beads_added and populate beads_closed
 		seen := make(map[string]bool)
 		var dedupedAdded []string
 		for _, id := range commit.BeadsAdded {
 			if !seen[id] {
 				seen[id] = true
 				dedupedAdded = append(dedupedAdded, id)
+				if issueStatusMap[id] {
+					commit.BeadsClosed = append(commit.BeadsClosed, id)
+				}
 			}
 		}
 		commit.BeadsAdded = dedupedAdded
