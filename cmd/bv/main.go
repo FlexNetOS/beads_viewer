@@ -5026,8 +5026,8 @@ func runTUIProgram(m ui.Model) error {
 	}
 
 	_, err := p.Run()
-	if err != nil && errors.Is(err, tea.ErrProgramKilled) {
-		if err == tea.ErrProgramKilled || errors.Is(err, tea.ErrInterrupted) {
+	if err != nil {
+		if errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted) {
 			return nil
 		}
 	}
@@ -5367,7 +5367,7 @@ func applyRecipeFilters(issues []model.Issue, r *recipe.Recipe) []model.Issue {
 		if f.HasBlockers != nil {
 			hasOpenBlockers := false
 			for _, dep := range issue.Dependencies {
-				if dep.Type == model.DepBlocks && openBlockers[dep.DependsOnID] {
+				if dep != nil && dep.Type == model.DepBlocks && openBlockers[dep.DependsOnID] {
 					hasOpenBlockers = true
 					break
 				}
@@ -5381,7 +5381,7 @@ func applyRecipeFilters(issues []model.Issue, r *recipe.Recipe) []model.Issue {
 		if f.Actionable != nil && *f.Actionable {
 			hasOpenBlockers := false
 			for _, dep := range issue.Dependencies {
-				if dep.Type == model.DepBlocks && openBlockers[dep.DependsOnID] {
+				if dep != nil && dep.Type == model.DepBlocks && openBlockers[dep.DependsOnID] {
 					hasOpenBlockers = true
 					break
 				}
