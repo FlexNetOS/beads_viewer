@@ -1065,7 +1065,7 @@ func (b BoardModel) View(width, height int) string {
 		}
 
 		headerStyle := t.Renderer.NewStyle().
-			Width(baseWidth + borderOverhead). // Match total column width (content + border)
+			Width(baseWidth+borderOverhead). // Match total column width (content + border)
 			Align(lipgloss.Center).
 			Bold(true).
 			Padding(0, 1)

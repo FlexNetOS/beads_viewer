@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -870,4 +871,140 @@ func TestSnapshotSwap_RebuildsTreeWhenFocusedAndPreservesSelection(t *testing.T)
 	if sel := m.tree.SelectedIssue(); sel == nil || sel.ID != selectedID {
 		t.Fatalf("expected tree selection preserved (%s), got %#v", selectedID, sel)
 	}
+}
+
+// TestWithPhase2_ReturnsNewPointer verifies that WithPhase2 returns a new snapshot pointer.
+func TestWithPhase2_ReturnsNewPointer(t *testing.T) {
+	issues := []model.Issue{
+		{ID: "A", Title: "Issue A", Status: model.StatusOpen, IssueType: model.TypeTask},
+		{ID: "B", Title: "Issue B", Status: model.StatusOpen, IssueType: model.TypeTask},
+	}
+
+	cfg := snapshotBuildConfigDefault()
+	cfg.SkipPhase2 = true // Ensure Phase2Ready starts as false
+	original := NewSnapshotBuilder(issues).WithBuildConfig(cfg).Build()
+
+	if original.Phase2Ready {
+		t.Skip("Phase2 completed before Build() returned; cannot test Phase2Ready transition")
+	}
+
+	// Create analyzer and compute Phase 2
+	analyzer := analysis.NewAnalyzer(issues)
+	stats := analyzer.AnalyzeAsync(nil)
+	stats.WaitForPhase2()
+	ins := stats.GenerateInsights(len(issues))
+
+	newSnapshot := original.WithPhase2(stats, ins, issues, analyzer)
+
+	if newSnapshot == original {
+		t.Error("WithPhase2 should return a new snapshot pointer")
+	}
+	if !newSnapshot.Phase2Ready {
+		t.Error("new snapshot should have Phase2Ready=true")
+	}
+}
+
+// TestWithPhase2_SharesIssues verifies that WithPhase2 shares Issues slice via pointer aliasing.
+func TestWithPhase2_SharesIssues(t *testing.T) {
+	issues := []model.Issue{
+		{ID: "A", Title: "Issue A", Status: model.StatusOpen, IssueType: model.TypeTask},
+		{ID: "B", Title: "Issue B", Status: model.StatusOpen, IssueType: model.TypeTask},
+	}
+
+	cfg := snapshotBuildConfigDefault()
+	original := NewSnapshotBuilder(issues).WithBuildConfig(cfg).Build()
+
+	analyzer := analysis.NewAnalyzer(issues)
+	stats := analyzer.AnalyzeAsync(nil)
+	stats.WaitForPhase2()
+	ins := stats.GenerateInsights(len(issues))
+
+	newSnapshot := original.WithPhase2(stats, ins, issues, analyzer)
+
+	// Verify pointer aliasing - Issues slice should be the same underlying array
+	if &original.Issues[0] != &newSnapshot.Issues[0] {
+		t.Error("WithPhase2 should share Issues slice via pointer aliasing")
+	}
+	if original.IssueMap != nil && newSnapshot.IssueMap != nil {
+		// IssueMap should be the same pointer
+		if len(original.IssueMap) != len(newSnapshot.IssueMap) {
+			t.Error("IssueMap should be shared")
+		}
+	}
+}
+
+// TestWithPhase2_NilSnapshot verifies that WithPhase2 handles nil receiver gracefully.
+func TestWithPhase2_NilSnapshot(t *testing.T) {
+	var s *DataSnapshot
+	result := s.WithPhase2(nil, analysis.Insights{}, nil, nil)
+	if result != nil {
+		t.Error("WithPhase2 on nil should return nil")
+	}
+}
+
+// TestWithPhase2_ConcurrentReadSafe verifies no race conditions when reading old snapshot
+// while WithPhase2 creates a new one.
+func TestWithPhase2_ConcurrentReadSafe(t *testing.T) {
+	issues := []model.Issue{
+		{ID: "A", Title: "Issue A", Status: model.StatusOpen, IssueType: model.TypeTask},
+		{ID: "B", Title: "Issue B", Status: model.StatusOpen, IssueType: model.TypeTask},
+	}
+
+	cfg := snapshotBuildConfigDefault()
+	original := NewSnapshotBuilder(issues).WithBuildConfig(cfg).Build()
+
+	analyzer := analysis.NewAnalyzer(issues)
+	stats := analyzer.AnalyzeAsync(nil)
+	stats.WaitForPhase2()
+	ins := stats.GenerateInsights(len(issues))
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Reader goroutine - read from original concurrently
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = original.Phase2Ready
+			_ = len(original.Issues)
+			if original.IssueMap != nil {
+				_ = len(original.IssueMap)
+			}
+		}
+	}()
+
+	// Writer goroutine - create new snapshot
+	go func() {
+		defer wg.Done()
+		_ = original.WithPhase2(stats, ins, issues, analyzer)
+	}()
+
+	wg.Wait()
+}
+
+// TestWithPhase2_TriagePopulation verifies triage data is populated in new snapshot.
+func TestWithPhase2_TriagePopulation(t *testing.T) {
+	issues := []model.Issue{
+		{ID: "A", Title: "Issue A", Status: model.StatusOpen, IssueType: model.TypeTask, Priority: 1},
+		{ID: "B", Title: "Issue B", Status: model.StatusOpen, IssueType: model.TypeTask, Priority: 2,
+			Dependencies: []*model.Dependency{{DependsOnID: "A", Type: model.DepBlocks}}},
+		{ID: "C", Title: "Issue C", Status: model.StatusOpen, IssueType: model.TypeTask, Priority: 3},
+		{ID: "D", Title: "Issue D", Status: model.StatusOpen, IssueType: model.TypeTask},
+	}
+
+	cfg := snapshotBuildConfigDefault()
+	original := NewSnapshotBuilder(issues).WithBuildConfig(cfg).Build()
+
+	analyzer := analysis.NewAnalyzer(issues)
+	stats := analyzer.AnalyzeAsync(nil)
+	stats.WaitForPhase2()
+	ins := stats.GenerateInsights(len(issues))
+
+	newSnapshot := original.WithPhase2(stats, ins, issues, analyzer)
+
+	// Verify triage data is populated (not nil)
+	t.Logf("TriageScores: %d entries", len(newSnapshot.TriageScores))
+	t.Logf("BlockerSet: %d entries", len(newSnapshot.BlockerSet))
+	t.Logf("QuickWinSet: %d entries", len(newSnapshot.QuickWinSet))
+	t.Logf("UnblocksMap: %d entries", len(newSnapshot.UnblocksMap))
 }

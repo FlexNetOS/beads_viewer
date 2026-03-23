@@ -447,7 +447,12 @@ func parseIssuesWithOptions(r io.Reader, opts ParseOptions, usePool bool) ([]mod
 				continue
 			}
 
+			// Append the struct value first, then deep-copy slice fields on the VALUE
+			// copy to break sharing with pooled backing arrays. This ensures that when
+			// the pooled issue is returned to the pool and its backing arrays are reused,
+			// the copied issue in the snapshot is not affected (bv-fn4b).
 			issues = append(issues, *issue)
+			DeepCopyIssueSlices(&issues[len(issues)-1])
 			poolRefs = append(poolRefs, issue)
 		} else {
 			var issue model.Issue

@@ -128,3 +128,35 @@ func clearIssueReferences(issue *model.Issue) {
 	issue.CompactedAt = nil
 	issue.CompactedAtCommit = nil
 }
+
+// DeepCopyIssueSlices creates independent copies of the Dependencies, Comments,
+// and Labels slices in the destination issue to break sharing with pooled backing arrays.
+// This must be called before returning a pooled issue to the pool to prevent
+// data races and corruption when the pool reuses the backing arrays.
+func DeepCopyIssueSlices(dst *model.Issue) {
+	if dst == nil {
+		return
+	}
+
+	// Deep copy Dependencies - each Dependency is a pointer, so we copy the slice
+	// but the Dependency structs themselves are not modified by the pool reset.
+	if len(dst.Dependencies) > 0 {
+		oldDeps := dst.Dependencies
+		dst.Dependencies = make([]*model.Dependency, len(oldDeps))
+		copy(dst.Dependencies, oldDeps)
+	}
+
+	// Deep copy Comments - same logic as Dependencies
+	if len(dst.Comments) > 0 {
+		oldComments := dst.Comments
+		dst.Comments = make([]*model.Comment, len(oldComments))
+		copy(dst.Comments, oldComments)
+	}
+
+	// Deep copy Labels - strings are immutable so copying the slice is sufficient
+	if len(dst.Labels) > 0 {
+		oldLabels := dst.Labels
+		dst.Labels = make([]string, len(oldLabels))
+		copy(dst.Labels, oldLabels)
+	}
+}

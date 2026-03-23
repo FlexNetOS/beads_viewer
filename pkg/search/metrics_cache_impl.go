@@ -7,6 +7,7 @@ import (
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/analysis"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
+	"golang.org/x/sync/singleflight"
 )
 
 const defaultPageRank = 0.5
@@ -14,6 +15,7 @@ const defaultPageRank = 0.5
 // metricsCache is the default MetricsCache implementation.
 type metricsCache struct {
 	mu              sync.RWMutex
+	sf              singleflight.Group // Prevents cache stampede on concurrent refresh
 	metrics         map[string]IssueMetrics
 	dataHash        string
 	maxBlockerCount int
@@ -92,6 +94,46 @@ func (l *AnalyzerMetricsLoader) ComputeDataHash() (string, error) {
 	return analysis.ComputeDataHash(l.issues), nil
 }
 
+// LoadMetricsWithHash computes metrics and hash atomically from the same issue set.
+// This prevents TOCTOU race conditions where the underlying data could change
+// between separate LoadMetrics and ComputeDataHash calls.
+func (l *AnalyzerMetricsLoader) LoadMetricsWithHash() (map[string]IssueMetrics, string, error) {
+	if len(l.issues) == 0 {
+		return map[string]IssueMetrics{}, "empty", nil
+	}
+
+	cached := analysis.NewCachedAnalyzer(l.issues, l.cache)
+	if l.config != nil {
+		cached.SetConfig(l.config)
+	}
+
+	stats := cached.AnalyzeAsync(context.Background())
+	stats.WaitForPhase2()
+
+	pageRank := stats.PageRank()
+	metrics := make(map[string]IssueMetrics, len(l.issues))
+
+	for _, issue := range l.issues {
+		pr, ok := pageRank[issue.ID]
+		if !ok {
+			pr = defaultPageRank
+		}
+		metrics[issue.ID] = IssueMetrics{
+			IssueID:      issue.ID,
+			PageRank:     pr,
+			Status:       string(issue.Status),
+			Priority:     issue.Priority,
+			BlockerCount: stats.InDegree[issue.ID],
+			UpdatedAt:    issue.UpdatedAt,
+		}
+	}
+
+	// Compute hash from the exact same issues used for metrics
+	hash := analysis.ComputeDataHash(l.issues)
+
+	return metrics, hash, nil
+}
+
 // Get returns metrics for an issue, computing/loading if needed.
 func (c *metricsCache) Get(issueID string) (IssueMetrics, bool) {
 	if issueID == "" {
@@ -99,6 +141,12 @@ func (c *metricsCache) Get(issueID string) (IssueMetrics, bool) {
 	}
 
 	if err := c.ensureFresh(); err != nil {
+		c.mu.RLock()
+		metric, ok := c.metrics[issueID]
+		c.mu.RUnlock()
+		if ok {
+			return metric, true
+		}
 		return defaultIssueMetrics(issueID), false
 	}
 
@@ -119,9 +167,15 @@ func (c *metricsCache) GetBatch(issueIDs []string) map[string]IssueMetrics {
 	}
 
 	if err := c.ensureFresh(); err != nil {
+		c.mu.RLock()
 		for _, id := range issueIDs {
-			results[id] = defaultIssueMetrics(id)
+			metric, ok := c.metrics[id]
+			if !ok {
+				metric = defaultIssueMetrics(id)
+			}
+			results[id] = metric
 		}
+		c.mu.RUnlock()
 		return results
 	}
 
@@ -139,19 +193,33 @@ func (c *metricsCache) GetBatch(issueIDs []string) map[string]IssueMetrics {
 }
 
 // Refresh recomputes the cache from source data.
+// When the loader implements MetricsLoaderAtomic, metrics and hash are loaded
+// together to prevent TOCTOU race conditions.
 func (c *metricsCache) Refresh() error {
 	if c.loader == nil {
 		return fmt.Errorf("metrics loader is nil")
 	}
 
-	metrics, err := c.loader.LoadMetrics()
-	if err != nil {
-		return err
-	}
+	var metrics map[string]IssueMetrics
+	var hash string
+	var err error
 
-	hash, err := c.loader.ComputeDataHash()
-	if err != nil {
-		return err
+	// Prefer atomic load to prevent TOCTOU race between LoadMetrics and ComputeDataHash
+	if atomic, ok := c.loader.(MetricsLoaderAtomic); ok {
+		metrics, hash, err = atomic.LoadMetricsWithHash()
+		if err != nil {
+			return err
+		}
+	} else {
+		// Fallback for simple loaders (e.g., test stubs)
+		metrics, err = c.loader.LoadMetrics()
+		if err != nil {
+			return err
+		}
+		hash, err = c.loader.ComputeDataHash()
+		if err != nil {
+			return err
+		}
 	}
 
 	copied := make(map[string]IssueMetrics, len(metrics))
@@ -204,7 +272,20 @@ func (c *metricsCache) ensureFresh() error {
 		return nil
 	}
 
-	return c.Refresh()
+	// Use singleflight to prevent cache stampede: all goroutines detecting
+	// the same staleness (same hash) will coalesce into a single Refresh call.
+	// The "winning" goroutine runs Refresh; others block and receive the same result.
+	_, err, _ = c.sf.Do(hash, func() (interface{}, error) {
+		// Double-check freshness: another goroutine may have just refreshed
+		c.mu.RLock()
+		stillStale := c.metrics == nil || c.dataHash == "" || c.dataHash != hash
+		c.mu.RUnlock()
+		if !stillStale {
+			return nil, nil
+		}
+		return nil, c.Refresh()
+	})
+	return err
 }
 
 func defaultIssueMetrics(issueID string) IssueMetrics {

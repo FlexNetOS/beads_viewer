@@ -907,3 +907,132 @@ func (s *DataSnapshot) Age() time.Duration {
 	}
 	return time.Since(s.CreatedAt)
 }
+
+// graphLayoutWithRanks returns a new GraphLayout with Phase 2 ranks populated from stats.
+// This is a pure function - it does not modify the input.
+func graphLayoutWithRanks(old *GraphLayout, stats *analysis.GraphStats) *GraphLayout {
+	if old == nil {
+		return nil
+	}
+	if stats == nil {
+		// Return a shallow copy with no rank updates
+		return &GraphLayout{
+			Blockers:         old.Blockers,
+			Dependents:       old.Dependents,
+			SortedIDs:        old.SortedIDs,
+			RankPageRank:     old.RankPageRank,
+			RankBetweenness:  old.RankBetweenness,
+			RankEigenvector:  old.RankEigenvector,
+			RankHubs:         old.RankHubs,
+			RankAuthorities:  old.RankAuthorities,
+			RankCriticalPath: old.RankCriticalPath,
+			RankInDegree:     old.RankInDegree,
+			RankOutDegree:    old.RankOutDegree,
+		}
+	}
+
+	criticalPathRank := stats.CriticalPathRank()
+	return &GraphLayout{
+		Blockers:         old.Blockers,
+		Dependents:       old.Dependents,
+		SortedIDs:        orderIssueIDsByRank(old.SortedIDs, criticalPathRank),
+		RankPageRank:     stats.PageRankRank(),
+		RankBetweenness:  stats.BetweennessRank(),
+		RankEigenvector:  stats.EigenvectorRank(),
+		RankHubs:         stats.HubsRank(),
+		RankAuthorities:  stats.AuthoritiesRank(),
+		RankCriticalPath: criticalPathRank,
+		RankInDegree:     stats.InDegreeRank(),
+		RankOutDegree:    stats.OutDegreeRank(),
+	}
+}
+
+// WithPhase2 returns a new DataSnapshot with Phase 2 analysis results populated.
+// The new snapshot shares immutable Phase 1 data (Issues, IssueMap, ListItems, etc.)
+// via pointer aliasing and creates new Phase 2 data structures.
+// This is the core method for immutable snapshot updates (bv-f6uz).
+func (s *DataSnapshot) WithPhase2(stats *analysis.GraphStats, insights analysis.Insights, issues []model.Issue, analyzer *analysis.Analyzer) *DataSnapshot {
+	if s == nil {
+		return nil
+	}
+
+	// Compute triage data from Phase 2 analysis
+	var triageScores map[string]float64
+	var triageReasons map[string]analysis.TriageReasons
+	var quickWinSet map[string]bool
+	var blockerSet map[string]bool
+	var unblocksMap map[string][]string
+
+	if stats != nil && analyzer != nil && len(issues) > 0 {
+		triageResult := analysis.ComputeTriageFromAnalyzer(analyzer, stats, issues, analysis.TriageOptions{}, time.Now())
+		triageScores = make(map[string]float64, len(triageResult.Recommendations))
+		triageReasons = make(map[string]analysis.TriageReasons, len(triageResult.Recommendations))
+		quickWinSet = make(map[string]bool, len(triageResult.QuickWins))
+		blockerSet = make(map[string]bool, len(triageResult.BlockersToClear))
+		unblocksMap = make(map[string][]string, len(triageResult.Recommendations))
+
+		for _, rec := range triageResult.Recommendations {
+			triageScores[rec.ID] = rec.Score
+			if len(rec.Reasons) > 0 {
+				triageReasons[rec.ID] = analysis.TriageReasons{
+					Primary:    rec.Reasons[0],
+					All:        rec.Reasons,
+					ActionHint: rec.Action,
+				}
+			}
+			unblocksMap[rec.ID] = rec.UnblocksIDs
+		}
+		for _, qw := range triageResult.QuickWins {
+			quickWinSet[qw.ID] = true
+		}
+		for _, bl := range triageResult.BlockersToClear {
+			blockerSet[bl.ID] = true
+		}
+	}
+
+	return &DataSnapshot{
+		// Shared via pointer aliasing (immutable data from Phase 1)
+		Issues:       s.Issues,
+		IssueMap:     s.IssueMap,
+		pooledIssues: s.pooledIssues,
+		ViewIssues:   s.ViewIssues,
+		ListItems:    s.ListItems,
+		TreeRoots:    s.TreeRoots,
+		TreeNodeMap:  s.TreeNodeMap,
+		BoardState:   s.BoardState,
+
+		// Updated with Phase 2 data
+		Analyzer:      analyzer,
+		Analysis:      stats,
+		Insights:      insights,
+		GraphLayout:   graphLayoutWithRanks(s.GraphLayout, stats),
+		Phase2Ready:   true,
+		TriageScores:  triageScores,
+		TriageReasons: triageReasons,
+		QuickWinSet:   quickWinSet,
+		BlockerSet:    blockerSet,
+		UnblocksMap:   unblocksMap,
+
+		// Copied metadata
+		CountOpen:            s.CountOpen,
+		CountReady:           s.CountReady,
+		CountBlocked:         s.CountBlocked,
+		CountClosed:          s.CountClosed,
+		CreatedAt:            s.CreatedAt,
+		DataHash:             s.DataHash,
+		RecipeName:           s.RecipeName,
+		RecipeHash:           s.RecipeHash,
+		DatasetTier:          s.DatasetTier,
+		SourceIssueCountHint: s.SourceIssueCountHint,
+		LoadedOpenOnly:       s.LoadedOpenOnly,
+		TruncatedCount:       s.TruncatedCount,
+		LargeDatasetWarning:  s.LargeDatasetWarning,
+		LoadWarningCount:     s.LoadWarningCount,
+		IssueDiff:            s.IssueDiff,
+		IssueDiffStats:       s.IssueDiffStats,
+		IncrementalListUsed:  s.IncrementalListUsed,
+		LoadError:            s.LoadError,
+		ErrorTime:            s.ErrorTime,
+		StaleWarning:         s.StaleWarning,
+	}
+}

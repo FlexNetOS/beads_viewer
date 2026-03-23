@@ -2,6 +2,8 @@ package search
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -117,6 +119,39 @@ func TestMetricsCache_Get_ReturnsDefaultOnError(t *testing.T) {
 	}
 }
 
+func TestMetricsCache_GetAndBatch_UseStaleCacheOnHashError(t *testing.T) {
+	loader := &stubMetricsLoader{
+		hash: "hash1",
+		metrics: map[string]IssueMetrics{
+			"A": {IssueID: "A", PageRank: 0.42, BlockerCount: 3},
+		},
+	}
+	cache := NewMetricsCache(loader)
+
+	if err := cache.Refresh(); err != nil {
+		t.Fatalf("refresh failed: %v", err)
+	}
+
+	loader.hashErr = errors.New("transient hash failure")
+	loader.metrics["A"] = IssueMetrics{IssueID: "A", PageRank: 0.99, BlockerCount: 9}
+
+	metric, ok := cache.Get("A")
+	if !ok {
+		t.Fatal("expected stale metric to remain available")
+	}
+	if metric.PageRank != 0.42 {
+		t.Fatalf("expected stale cached PageRank 0.42, got %f", metric.PageRank)
+	}
+
+	batch := cache.GetBatch([]string{"A", "B"})
+	if batch["A"].PageRank != 0.42 {
+		t.Fatalf("expected stale cached batch PageRank 0.42, got %f", batch["A"].PageRank)
+	}
+	if batch["B"].PageRank != defaultPageRank {
+		t.Fatalf("expected default PageRank for uncached issue, got %f", batch["B"].PageRank)
+	}
+}
+
 func TestAnalyzerMetricsLoader_LoadMetrics(t *testing.T) {
 	now := time.Date(2025, 12, 18, 12, 0, 0, 0, time.UTC)
 	dep := &model.Dependency{
@@ -179,5 +214,247 @@ func TestAnalyzerMetricsLoader_LoadMetrics(t *testing.T) {
 	expectedHash := analysis.ComputeDataHash([]model.Issue{issueA, issueB})
 	if hash != expectedHash {
 		t.Fatalf("expected hash %q, got %q", expectedHash, hash)
+	}
+}
+
+// atomicMetricsLoader implements MetricsLoaderAtomic for testing atomic hash-and-load.
+type atomicMetricsLoader struct {
+	// metrics and hash for atomic loads
+	atomicMetrics map[string]IssueMetrics
+	atomicHash    string
+
+	// Separate values for non-atomic path to simulate TOCTOU race
+	loadMetrics map[string]IssueMetrics
+	hashValue   string
+
+	atomicCalls    int
+	nonAtomicCalls int
+}
+
+func (a *atomicMetricsLoader) LoadMetrics() (map[string]IssueMetrics, error) {
+	a.nonAtomicCalls++
+	return a.loadMetrics, nil
+}
+
+func (a *atomicMetricsLoader) ComputeDataHash() (string, error) {
+	return a.hashValue, nil
+}
+
+func (a *atomicMetricsLoader) LoadMetricsWithHash() (map[string]IssueMetrics, string, error) {
+	a.atomicCalls++
+	return a.atomicMetrics, a.atomicHash, nil
+}
+
+func TestMetricsCacheRefresh_AtomicHash(t *testing.T) {
+	// Scenario: loader returns different data atomically vs non-atomically
+	// to simulate TOCTOU race condition. The atomic path should be used.
+	loader := &atomicMetricsLoader{
+		// Atomic path returns consistent data
+		atomicMetrics: map[string]IssueMetrics{
+			"A": {IssueID: "A", PageRank: 0.8, BlockerCount: 3},
+		},
+		atomicHash: "atomic-hash-001",
+
+		// Non-atomic path would return different (stale) data - simulating race
+		loadMetrics: map[string]IssueMetrics{
+			"A": {IssueID: "A", PageRank: 0.5, BlockerCount: 1},
+		},
+		hashValue: "non-atomic-hash-002", // different from atomicHash
+	}
+
+	cache := NewMetricsCache(loader)
+
+	// Refresh should use the atomic path
+	err := cache.Refresh()
+	if err != nil {
+		t.Fatalf("unexpected refresh error: %v", err)
+	}
+
+	// Verify atomic path was used
+	if loader.atomicCalls != 1 {
+		t.Fatalf("expected 1 atomic call, got %d", loader.atomicCalls)
+	}
+	if loader.nonAtomicCalls != 0 {
+		t.Fatalf("expected 0 non-atomic calls, got %d", loader.nonAtomicCalls)
+	}
+
+	// Verify the hash matches the atomic hash (not the stale one)
+	if cache.DataHash() != "atomic-hash-001" {
+		t.Fatalf("expected atomic hash %q, got %q", "atomic-hash-001", cache.DataHash())
+	}
+
+	// Verify the metrics match the atomic metrics
+	metric, ok := cache.Get("A")
+	if !ok {
+		t.Fatal("expected metric A to be found")
+	}
+	if metric.PageRank != 0.8 {
+		t.Fatalf("expected PageRank 0.8, got %f", metric.PageRank)
+	}
+	if metric.BlockerCount != 3 {
+		t.Fatalf("expected BlockerCount 3, got %d", metric.BlockerCount)
+	}
+}
+
+func TestMetricsCacheRefresh_FallbackToNonAtomic(t *testing.T) {
+	// Verify that loaders NOT implementing MetricsLoaderAtomic
+	// still work via the fallback path
+	loader := &stubMetricsLoader{
+		metrics: map[string]IssueMetrics{
+			"B": {IssueID: "B", PageRank: 0.4, BlockerCount: 2},
+		},
+		hash: "stub-hash-123",
+	}
+
+	cache := NewMetricsCache(loader)
+
+	err := cache.Refresh()
+	if err != nil {
+		t.Fatalf("unexpected refresh error: %v", err)
+	}
+
+	// Verify fallback path was used
+	if loader.loadCalls != 1 {
+		t.Fatalf("expected 1 load call, got %d", loader.loadCalls)
+	}
+
+	// Verify the hash and metrics
+	if cache.DataHash() != "stub-hash-123" {
+		t.Fatalf("expected hash %q, got %q", "stub-hash-123", cache.DataHash())
+	}
+
+	metric, ok := cache.Get("B")
+	if !ok {
+		t.Fatal("expected metric B to be found")
+	}
+	if metric.PageRank != 0.4 {
+		t.Fatalf("expected PageRank 0.4, got %f", metric.PageRank)
+	}
+}
+
+func TestAnalyzerMetricsLoader_LoadMetricsWithHash(t *testing.T) {
+	now := time.Date(2025, 12, 18, 12, 0, 0, 0, time.UTC)
+	issueA := model.Issue{
+		ID:        "A",
+		Title:     "Issue A",
+		Status:    model.StatusOpen,
+		IssueType: model.TypeTask,
+		Priority:  2,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	issueB := model.Issue{
+		ID:        "B",
+		Title:     "Issue B",
+		Status:    model.StatusBlocked,
+		IssueType: model.TypeTask,
+		Priority:  1,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	loader := NewAnalyzerMetricsLoader([]model.Issue{issueA, issueB})
+	metrics, hash, err := loader.LoadMetricsWithHash()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify metrics were loaded
+	if len(metrics) != 2 {
+		t.Fatalf("expected 2 metrics, got %d", len(metrics))
+	}
+	if metrics["A"].Status != string(model.StatusOpen) {
+		t.Fatalf("expected A status open, got %q", metrics["A"].Status)
+	}
+
+	// Verify hash matches what ComputeDataHash would return for same data
+	expectedHash := analysis.ComputeDataHash([]model.Issue{issueA, issueB})
+	if hash != expectedHash {
+		t.Fatalf("expected hash %q, got %q", expectedHash, hash)
+	}
+
+	// Verify atomic consistency: hash from LoadMetricsWithHash equals ComputeDataHash
+	separateHash, _ := loader.ComputeDataHash()
+	if hash != separateHash {
+		t.Fatalf("atomic hash %q != separate hash %q", hash, separateHash)
+	}
+}
+
+// singleflightMetricsLoader tracks load calls with an atomic counter for concurrent testing.
+type singleflightMetricsLoader struct {
+	loadCalls int64 // atomic counter
+	metrics   map[string]IssueMetrics
+	hash      string
+}
+
+func (s *singleflightMetricsLoader) LoadMetrics() (map[string]IssueMetrics, error) {
+	atomic.AddInt64(&s.loadCalls, 1)
+	// Simulate some work to increase chance of concurrent calls overlapping
+	time.Sleep(10 * time.Millisecond)
+	return s.metrics, nil
+}
+
+func (s *singleflightMetricsLoader) ComputeDataHash() (string, error) {
+	return s.hash, nil
+}
+
+func TestMetricsCacheEnsureFresh_Singleflight(t *testing.T) {
+	loader := &singleflightMetricsLoader{
+		metrics: map[string]IssueMetrics{
+			"A": {IssueID: "A", PageRank: 0.7, BlockerCount: 2},
+		},
+		hash: "singleflight-test-hash",
+	}
+
+	cache := NewMetricsCache(loader)
+
+	// Launch 10 goroutines that all try to Get concurrently
+	// This should trigger ensureFresh which should use singleflight
+	const numGoroutines = 10
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Barrier to ensure all goroutines start at approximately the same time
+	start := make(chan struct{})
+	testStart := time.Now()
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			<-start // Wait for signal
+			goroutineStart := time.Now()
+			_, _ = cache.Get("A")
+			t.Logf("goroutine %d returned in %v", id, time.Since(goroutineStart))
+		}(i)
+	}
+
+	// Release all goroutines at once
+	close(start)
+	wg.Wait()
+	t.Logf("all goroutines completed in %v", time.Since(testStart))
+
+	// With singleflight, LoadMetrics should be called exactly once
+	// (or at most a small number if timing is unlucky, but typically 1)
+	calls := atomic.LoadInt64(&loader.loadCalls)
+	if calls > 2 {
+		t.Fatalf("expected LoadMetrics to be called at most 2 times (singleflight), got %d", calls)
+	}
+	if calls == 0 {
+		t.Fatal("expected LoadMetrics to be called at least once")
+	}
+
+	// Verify the cache was populated
+	if cache.DataHash() != "singleflight-test-hash" {
+		t.Fatalf("expected hash %q, got %q", "singleflight-test-hash", cache.DataHash())
+	}
+
+	// Verify subsequent calls don't trigger loads (cache is fresh)
+	initialCalls := calls
+	for i := 0; i < 5; i++ {
+		_, _ = cache.Get("A")
+	}
+	finalCalls := atomic.LoadInt64(&loader.loadCalls)
+	if finalCalls != initialCalls {
+		t.Fatalf("expected no additional loads for fresh cache, got %d more", finalCalls-initialCalls)
 	}
 }

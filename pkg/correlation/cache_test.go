@@ -1,6 +1,8 @@
 package correlation
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -293,14 +295,22 @@ func TestHashBeads(t *testing.T) {
 		{ID: "bv-1", Status: "closed"}, // Different status
 		{ID: "bv-2", Status: "closed"},
 	}
+	beadsReordered := []BeadInfo{
+		{ID: "bv-2", Status: "closed"},
+		{ID: "bv-1", Status: "open"},
+	}
 
 	hash1 := hashBeads(beads1)
 	hash2 := hashBeads(beads2)
 	hash3 := hashBeads(beads3)
+	hashReordered := hashBeads(beadsReordered)
 
 	// Same input should produce same hash
 	if hash1 != hash2 {
 		t.Errorf("Same beads should produce same hash: %s != %s", hash1, hash2)
+	}
+	if hash1 != hashReordered {
+		t.Errorf("Equivalent beads in different order should produce same hash: %s != %s", hash1, hashReordered)
 	}
 
 	// Different input should produce different hash
@@ -444,6 +454,126 @@ func TestNewCachedCorrelatorWithOptions(t *testing.T) {
 	}
 	if correlator.cache.maxSize != 20 {
 		t.Errorf("maxSize = %d, want 20", correlator.cache.maxSize)
+	}
+}
+
+func TestCachedCorrelator_Singleflight(t *testing.T) {
+	// Skip if not in a git repo
+	if _, err := getGitHead("."); err != nil {
+		t.Skip("Not in a git repository")
+	}
+
+	correlator := NewCachedCorrelator(".")
+	beads := []BeadInfo{{ID: "test-1", Status: "open"}}
+	opts := CorrelatorOptions{Limit: 10}
+
+	var calls atomic.Int32
+	var started atomic.Int32
+	generateStarted := make(chan struct{})
+	releaseGenerate := make(chan struct{})
+
+	correlator.generateReportFn = func([]BeadInfo, CorrelatorOptions) (*HistoryReport, error) {
+		calls.Add(1)
+		select {
+		case <-generateStarted:
+		default:
+			close(generateStarted)
+		}
+		<-releaseGenerate
+		return &HistoryReport{
+			GeneratedAt: time.Now().UTC(),
+			Histories:   map[string]BeadHistory{"test-1": {BeadID: "test-1"}},
+		}, nil
+	}
+
+	const workers = 16
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	ready.Add(workers)
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	errCh := make(chan error, workers)
+	reports := make(chan *HistoryReport, workers)
+
+	testStart := time.Now()
+	for i := 0; i < workers; i++ {
+		go func(id int) {
+			defer wg.Done()
+			ready.Done()
+			<-start
+			started.Add(1)
+			goroutineStart := time.Now()
+
+			report, err := correlator.GenerateReport(beads, opts)
+			t.Logf("goroutine %d returned in %v", id, time.Since(goroutineStart))
+			if err != nil {
+				errCh <- err
+				return
+			}
+			reports <- report
+		}(i)
+	}
+
+	ready.Wait()
+	close(start)
+
+	select {
+	case <-generateStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for report generation to start")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for started.Load() != workers {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for workers to start, got %d of %d", started.Load(), workers)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	close(releaseGenerate)
+	wg.Wait()
+	t.Logf("all goroutines completed in %v", time.Since(testStart))
+	close(errCh)
+	close(reports)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("GenerateReport returned error: %v", err)
+		}
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("underlying GenerateReport calls = %d, want 1", got)
+	}
+
+	var first *HistoryReport
+	count := 0
+	for report := range reports {
+		if report == nil {
+			t.Fatal("GenerateReport returned nil report")
+		}
+		if first == nil {
+			first = report
+		} else if report != first {
+			t.Fatal("expected all callers to receive the shared report instance")
+		}
+		count++
+	}
+
+	if count != workers {
+		t.Fatalf("reports returned = %d, want %d", count, workers)
+	}
+
+	stats := correlator.CacheStats()
+	if stats.Misses != 1 {
+		t.Fatalf("Misses = %d, want 1", stats.Misses)
+	}
+	if stats.CacheSize != 1 {
+		t.Fatalf("CacheSize = %d, want 1", stats.CacheSize)
 	}
 }
 

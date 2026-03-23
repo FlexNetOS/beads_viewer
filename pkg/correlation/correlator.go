@@ -2,8 +2,6 @@
 package correlation
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -296,12 +294,7 @@ func (c *Correlator) describeGitRange(opts CorrelatorOptions) string {
 
 // calculateDataHash creates a hash of the input beads for consistency checking
 func (c *Correlator) calculateDataHash(beads []BeadInfo) string {
-	h := sha256.New()
-	for _, b := range beads {
-		h.Write([]byte(b.ID))
-		h.Write([]byte(b.Status))
-	}
-	return hex.EncodeToString(h.Sum(nil))[:12]
+	return hashBeads(beads)
 }
 
 // ValidateRepository checks if the repository is valid for correlation

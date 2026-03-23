@@ -1362,7 +1362,11 @@ func (a *Analyzer) AnalyzeAsyncWithConfig(ctx context.Context, config AnalysisCo
 		dataHash = ComputeDataHash(issues)
 		robotCacheKey = dataHash + "|" + configHash
 
-		if cached, ok := getRobotDiskCachedStats(robotCacheKey); ok {
+		if cached, xfetchRefresh, ok := getRobotDiskCachedStats(robotCacheKey); ok {
+			// XFetch suggests early refresh to prevent stampedes, but for robot mode
+			// we still return the cached value immediately. The next invocation
+			// will recompute if needed.
+			_ = xfetchRefresh // Future: could trigger async refresh
 			return cached
 		}
 	}
@@ -1977,10 +1981,12 @@ func (a *Analyzer) computePhase2(ctx context.Context, stats *GraphStats, config 
 	// Use the profiled version logic to avoid duplication
 	// We discard the profile data as this is the standard run
 	dummyProfile := &StartupProfile{}
+	computeStart := time.Now()
 	a.computePhase2WithProfile(ctx, stats, config, dummyProfile)
+	computeDuration := time.Since(computeStart)
 
 	if cacheKey != "" {
-		putRobotDiskCachedStats(cacheKey, dataHash, configHash, stats)
+		putRobotDiskCachedStats(cacheKey, dataHash, configHash, stats, computeDuration)
 	}
 }
 
