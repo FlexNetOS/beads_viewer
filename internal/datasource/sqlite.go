@@ -408,7 +408,11 @@ func (r *SQLiteReader) GetLastModified() (time.Time, error) {
 		// Try other common formats
 		t, err = time.Parse(time.RFC3339, raw.String)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("cannot parse updated_at %q: %w", raw.String, err)
+			// Plain SQLite DATETIME format (no timezone suffix)
+			t, err = time.Parse("2006-01-02 15:04:05", raw.String)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("cannot parse updated_at %q: %w", raw.String, err)
+			}
 		}
 	}
 	return t, nil

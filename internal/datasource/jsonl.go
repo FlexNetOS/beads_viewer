@@ -22,9 +22,20 @@ func NewJSONLReader(source DataSource) (*JSONLReader, error) {
 	return &JSONLReader{path: source.Path}, nil
 }
 
-// LoadIssues returns all issues from the JSONL file.
+// LoadIssues returns all non-tombstone issues from the JSONL file.
 func (r *JSONLReader) LoadIssues() ([]model.Issue, error) {
-	return loader.LoadIssuesFromFile(r.path)
+	all, err := loader.LoadIssuesFromFile(r.path)
+	if err != nil {
+		return nil, err
+	}
+	// Filter out tombstone issues to match the IssueReader contract.
+	out := make([]model.Issue, 0, len(all))
+	for i := range all {
+		if !all[i].Status.IsTombstone() {
+			out = append(out, all[i])
+		}
+	}
+	return out, nil
 }
 
 // LoadIssuesFiltered returns issues matching the provided filter.
