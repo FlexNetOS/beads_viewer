@@ -1103,6 +1103,7 @@ func NewModel(issues []model.Issue, activeRecipe *recipe.Recipe, beadsPath strin
 		graphView:              graphView,
 		tree:                   treeModel,
 		insightsPanel:          insightsPanel,
+		historyView:            NewHistoryModel(nil, theme), // Initialize with empty report for safe search access
 		theme:                  theme,
 		keyRegistry:            keyRegistry,
 		currentFilter:          "all",
