@@ -774,7 +774,7 @@ func main() {
 			{flags: []string{"robot-correlation-stats"}},
 			{flags: []string{"robot-orphans"}},
 			{flags: []string{"robot-file-beads"}},
-			{flags: []string{"robot-file-hotspots"}},
+			{flags: []string{"file-hotspots"}},
 			{flags: []string{"robot-impact"}},
 			{flags: []string{"robot-file-relations"}},
 			{flags: []string{"robot-related"}},
@@ -3395,7 +3395,9 @@ func main() {
 			os.Exit(0)
 		}
 
-		dispatchRobotFlagOrExit(&phaseThreeRobotRegistry, "robot-file-beads", robotDispatchContext)
+		if !*fileHotspots {
+			dispatchRobotFlagOrExit(&phaseThreeRobotRegistry, "robot-file-beads", robotDispatchContext)
+		}
 
 		// Handle --robot-file-beads and --robot-file-hotspots flags (bv-hmib)
 		if *robotFileBeads != "" || *fileHotspots {

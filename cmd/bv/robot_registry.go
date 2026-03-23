@@ -2204,6 +2204,9 @@ func handleRobotFileBeads(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) er
 	if cfg.FileBeadsLimit != nil {
 		closedLimit = *cfg.FileBeadsLimit
 	}
+	if closedLimit < 0 {
+		closedLimit = 0
+	}
 	if len(result.ClosedBeads) > closedLimit {
 		result.ClosedBeads = result.ClosedBeads[:closedLimit]
 	}
