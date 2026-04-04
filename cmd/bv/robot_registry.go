@@ -143,6 +143,7 @@ type phaseThreeRobotHandlerConfig struct {
 	RobotLabelHealthFlag    *bool
 	RobotLabelFlowFlag      *bool
 	RobotLabelAttentionFlag *bool
+	GraphRoot               *string // bv-140: scope triage to subgraph rooted at this issue
 	BeadHistoryFlag         *string
 	RobotExplainCorrFlag    *string
 	RobotConfirmCorrFlag    *string
@@ -1678,12 +1679,19 @@ func handleRobotTriage(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) error
 		}
 	}
 
+	// bv-140: scope triage to a subgraph if --graph-root is specified
+	var rootIssueID string
+	if cfg.GraphRoot != nil && *cfg.GraphRoot != "" {
+		rootIssueID = *cfg.GraphRoot
+	}
+
 	triage := analysis.ComputeTriageWithOptions(ctx.Issues, analysis.TriageOptions{
 		GroupByTrack:  cfg.RobotTriageByTrackFlag != nil && *cfg.RobotTriageByTrackFlag,
 		GroupByLabel:  cfg.RobotTriageByLabelFlag != nil && *cfg.RobotTriageByLabelFlag,
 		WaitForPhase2: true,
 		UseFastConfig: true,
 		History:       historyReport,
+		RootIssueID:   rootIssueID,
 	})
 
 	var feedbackInfo *analysis.FeedbackJSON
@@ -1772,6 +1780,7 @@ func handleRobotTriage(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) error
 			"jq '.triage.recommendations_by_track[].top_pick' - Top pick per track",
 			"jq '.triage.recommendations_by_label[].claim_command' - Claim commands per label",
 			"jq '.feedback.weight_adjustments' - View feedback-adjusted weights (bv-90)",
+			"--graph-root <id> - Scope triage to subgraph rooted at a specific epic (bv-140)",
 		},
 	}
 	if err := ctx.EncoderOrDefault().Encode(output); err != nil {

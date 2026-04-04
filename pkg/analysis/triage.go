@@ -301,6 +301,9 @@ type TriageOptions struct {
 	GroupByTrack bool // Group recommendations by execution track (connected component)
 	GroupByLabel bool // Group recommendations by primary label
 
+	// bv-140: Scope triage to subgraph rooted at a specific epic/issue
+	RootIssueID string // If set, filter issues to the subgraph rooted at this ID
+
 	// History report for staleness analysis
 	History *correlation.HistoryReport
 }
@@ -331,6 +334,13 @@ func ComputeTriageWithOptions(issues []model.Issue, opts TriageOptions) TriageRe
 
 // ComputeTriageWithOptionsAndTime generates triage with a deterministic clock (testing).
 func ComputeTriageWithOptionsAndTime(issues []model.Issue, opts TriageOptions, now time.Time) TriageResult {
+	// bv-140: If a root issue is specified, filter to the subgraph rooted at that issue.
+	// "Rooted at" means the root itself plus all issues that transitively depend on it
+	// (descendants in the dependency DAG). This scopes triage to a specific epic.
+	if opts.RootIssueID != "" {
+		issues = extractDescendantSubgraph(issues, opts.RootIssueID)
+	}
+
 	// Build analyzer and stats
 	analyzer := NewAnalyzer(issues)
 
@@ -364,6 +374,56 @@ func ComputeTriageWithOptionsAndTime(issues []model.Issue, opts TriageOptions, n
 	}
 
 	return ComputeTriageFromAnalyzer(analyzer, stats, issues, opts, now)
+}
+
+// extractDescendantSubgraph returns the subgraph rooted at rootID: the root
+// itself plus all issues that transitively depend on it (its descendants).
+// This is the reverse of following DependsOnID — we build an adjacency from
+// blocker -> dependents and BFS downward.
+func extractDescendantSubgraph(issues []model.Issue, rootID string) []model.Issue {
+	// Build reverse adjacency: parentID -> []childIDs
+	// An issue with DependsOnID=X means X is the parent/blocker, so X -> issue.ID
+	children := make(map[string][]string, len(issues))
+	issueMap := make(map[string]struct{}, len(issues))
+	for _, iss := range issues {
+		issueMap[iss.ID] = struct{}{}
+		for _, dep := range iss.Dependencies {
+			if dep != nil {
+				children[dep.DependsOnID] = append(children[dep.DependsOnID], iss.ID)
+			}
+		}
+	}
+
+	// Verify root exists
+	if _, ok := issueMap[rootID]; !ok {
+		return nil
+	}
+
+	// BFS from root through reverse edges (parent -> children)
+	visited := make(map[string]bool, len(issues))
+	queue := []string{rootID}
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+		if visited[curr] {
+			continue
+		}
+		visited[curr] = true
+		for _, childID := range children[curr] {
+			if !visited[childID] {
+				queue = append(queue, childID)
+			}
+		}
+	}
+
+	// Collect visited issues preserving original order
+	result := make([]model.Issue, 0, len(visited))
+	for _, iss := range issues {
+		if visited[iss.ID] {
+			result = append(result, iss)
+		}
+	}
+	return result
 }
 
 // ComputeTriageFromAnalyzer generates triage reusing an existing analyzer and stats.
