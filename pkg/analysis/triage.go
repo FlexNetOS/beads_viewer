@@ -486,8 +486,8 @@ func ComputeTriageFromAnalyzer(analyzer *Analyzer, stats *GraphStats, issues []m
 
 	// Determine top issue for commands
 	topID := ""
-	if len(recommendations) > 0 {
-		topID = recommendations[0].ID
+	if len(topPicks) > 0 {
+		topID = topPicks[0].ID
 	}
 
 	elapsed := time.Since(start)

@@ -373,6 +373,143 @@ func TestTriageNoRecommendationsCommands(t *testing.T) {
 	}
 }
 
+func TestComputeTriage_ParentBlockedChildNotTopPickOrClaim(t *testing.T) {
+	now := time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC)
+	issues := []model.Issue{
+		{
+			ID:        "blocker",
+			Title:     "Root blocker",
+			Status:    model.StatusOpen,
+			Priority:  1,
+			IssueType: model.TypeTask,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "parent",
+			Title:     "Blocked parent",
+			Status:    model.StatusOpen,
+			Priority:  0,
+			IssueType: model.TypeTask,
+			UpdatedAt: now,
+			Dependencies: []*model.Dependency{
+				{DependsOnID: "blocker", Type: model.DepBlocks},
+			},
+		},
+		{
+			ID:        "child",
+			Title:     "High-priority child",
+			Status:    model.StatusOpen,
+			Priority:  0,
+			IssueType: model.TypeTask,
+			UpdatedAt: now,
+			Dependencies: []*model.Dependency{
+				{DependsOnID: "parent", Type: model.DepParentChild},
+			},
+		},
+	}
+
+	triage := ComputeTriageWithOptionsAndTime(issues, TriageOptions{WaitForPhase2: true}, now)
+
+	if triage.QuickRef.ActionableCount != 1 {
+		t.Fatalf("expected only the root blocker to be actionable, got %d", triage.QuickRef.ActionableCount)
+	}
+	if triage.QuickRef.BlockedCount != 2 {
+		t.Fatalf("expected parent and child blocked, got %d", triage.QuickRef.BlockedCount)
+	}
+
+	for _, pick := range triage.QuickRef.TopPicks {
+		if pick.ID == "parent" || pick.ID == "child" {
+			t.Fatalf("blocked issue %q must not appear in top picks", pick.ID)
+		}
+	}
+	if len(triage.QuickRef.TopPicks) == 0 || triage.QuickRef.TopPicks[0].ID != "blocker" {
+		t.Fatalf("expected blocker to be the top actionable pick, got %+v", triage.QuickRef.TopPicks)
+	}
+
+	expectedClaim := "CI=1 br update blocker --status in_progress --json"
+	if triage.Commands.ClaimTop != expectedClaim {
+		t.Fatalf("expected claim_top %q, got %q", expectedClaim, triage.Commands.ClaimTop)
+	}
+
+	var childRec *Recommendation
+	var parentRec *Recommendation
+	for i := range triage.Recommendations {
+		switch triage.Recommendations[i].ID {
+		case "child":
+			childRec = &triage.Recommendations[i]
+		case "parent":
+			parentRec = &triage.Recommendations[i]
+		}
+	}
+	if childRec == nil {
+		t.Fatal("expected child recommendation to remain visible with blocked_by context")
+	}
+	if len(childRec.BlockedBy) != 1 || childRec.BlockedBy[0] != "parent" {
+		t.Fatalf("expected child blocked_by parent, got %v", childRec.BlockedBy)
+	}
+	if parentRec == nil {
+		t.Fatal("expected parent recommendation to remain visible with blocked_by context")
+	}
+	if len(parentRec.BlockedBy) != 1 || parentRec.BlockedBy[0] != "blocker" {
+		t.Fatalf("expected parent blocked_by blocker, got %v", parentRec.BlockedBy)
+	}
+}
+
+func TestComputeTriage_ParentChildParentBlocksChildClaim(t *testing.T) {
+	now := time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC)
+	issues := []model.Issue{
+		{
+			ID:        "parent",
+			Title:     "Parent issue",
+			Status:    model.StatusOpen,
+			Priority:  1,
+			IssueType: model.TypeTask,
+			UpdatedAt: now,
+		},
+		{
+			ID:        "child",
+			Title:     "Higher-priority child",
+			Status:    model.StatusOpen,
+			Priority:  0,
+			IssueType: model.TypeTask,
+			UpdatedAt: now,
+			Dependencies: []*model.Dependency{
+				{DependsOnID: "parent", Type: model.DepParentChild},
+			},
+		},
+	}
+
+	triage := ComputeTriageWithOptionsAndTime(issues, TriageOptions{WaitForPhase2: true}, now)
+
+	for _, pick := range triage.QuickRef.TopPicks {
+		if pick.ID == "child" {
+			t.Fatalf("parent-child child must not appear in top picks while parent is open")
+		}
+	}
+	if len(triage.QuickRef.TopPicks) == 0 || triage.QuickRef.TopPicks[0].ID != "parent" {
+		t.Fatalf("expected parent to be the claimable top pick, got %+v", triage.QuickRef.TopPicks)
+	}
+
+	expectedClaim := "CI=1 br update parent --status in_progress --json"
+	if triage.Commands.ClaimTop != expectedClaim {
+		t.Fatalf("expected claim_top %q, got %q", expectedClaim, triage.Commands.ClaimTop)
+	}
+
+	var childRec *Recommendation
+	for i := range triage.Recommendations {
+		if triage.Recommendations[i].ID == "child" {
+			childRec = &triage.Recommendations[i]
+			break
+		}
+	}
+	if childRec == nil {
+		t.Fatal("expected child recommendation to remain visible with blocked_by context")
+	}
+	if len(childRec.BlockedBy) != 1 || childRec.BlockedBy[0] != "parent" {
+		t.Fatalf("expected child blocked_by parent, got %v", childRec.BlockedBy)
+	}
+}
+
 func TestTriageInProgressAction(t *testing.T) {
 	// Test the different staleness thresholds for in_progress items
 	tests := []struct {
