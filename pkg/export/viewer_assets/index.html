@@ -2965,6 +2965,7 @@
            x-transition:leave="transition ease-in duration-200"
            x-transition:leave-start="md:translate-x-0 translate-y-0"
            x-transition:leave-end="md:translate-x-full translate-y-full"
+           @keydown.escape.window="if (graphDetailNode && !selectedIssue) { graphDetailNode = null; if(forceGraphModule?.clearSelection) forceGraphModule.clearSelection(); setTimeout(() => resizeForceGraph(), 250); }"
            @touchstart.passive="touchStartY = $event.touches[0].clientY; touchStartX = $event.touches[0].clientX; touchCurrentY = touchStartY; touchCurrentX = touchStartX; swiping = true"
            @touchmove.passive="if(swiping) { touchCurrentY = $event.touches[0].clientY; touchCurrentX = $event.touches[0].clientX; if(isMobile && touchCurrentY > touchStartY) { $el.style.transform = 'translateY(' + Math.max(0, touchCurrentY - touchStartY) + 'px)'; } else if(!isMobile && touchCurrentX > touchStartX) { $el.style.transform = 'translateX(' + Math.max(0, touchCurrentX - touchStartX) + 'px)'; } }"
            @touchend="if(swiping) { const swipeY = touchCurrentY - touchStartY; const swipeX = touchCurrentX - touchStartX; if((isMobile && swipeY > 100) || (!isMobile && swipeX > 100)) { graphDetailNode = null; if(forceGraphModule?.clearSelection) forceGraphModule.clearSelection(); setTimeout(() => resizeForceGraph(), 250); } $el.style.transform = ''; swiping = false; }"
