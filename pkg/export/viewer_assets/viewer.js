@@ -2466,7 +2466,14 @@ function beadsApp() {
         }
       });
 
-      // Force-graph integration: clicking a node opens the issue modal without changing routes.
+      // Force-graph integration: double-click opens the full issue modal.
+      // Single click pins the node in the side detail pane (handled by the
+      // listener registered later inside loadGraph). Detect double-click via a
+      // manual timer so we don't depend on `event.detail` (which some
+      // force-graph builds and synthetic events do not populate reliably —
+      // bv-142).
+      const DBLCLICK_MS = 350;
+      let _lastNodeClick = { id: null, t: 0 };
       document.addEventListener('bv-graph:nodeClick', (e) => {
         const nodeId = e?.detail?.node?.id;
         const ev = e?.detail?.event;
@@ -2475,12 +2482,22 @@ function beadsApp() {
         // Let graph interactions work:
         // - Shift+click triggers what-if
         // - Ctrl/Meta+click highlights dependency paths
-        if (ev && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) return;
+        if (ev && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
+          _lastNodeClick = { id: null, t: 0 };
+          return;
+        }
 
-        // Open the issue modal on double-click.
-        if (ev && typeof ev.detail === 'number' && ev.detail < 2) return;
+        const now = Date.now();
+        const isDouble =
+          _lastNodeClick.id === nodeId &&
+          now - _lastNodeClick.t < DBLCLICK_MS;
 
-        this.selectIssue(nodeId);
+        if (isDouble) {
+          _lastNodeClick = { id: null, t: 0 };
+          this.selectIssue(nodeId);
+        } else {
+          _lastNodeClick = { id: nodeId, t: now };
+        }
       });
 
       try {
