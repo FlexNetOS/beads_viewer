@@ -330,10 +330,11 @@ func dispatchRobotFlagOrExit(registry *RobotRegistry, flagName string, ctx Robot
 	}
 
 	// Only emit an "Error handling …" line when the handler actually failed
-	// (non-zero exit or returned err) AND that failure has not already been
+	// (non-zero exit or a returned err) AND that failure has not already been
 	// reported by the handler itself. Previously we printed the error banner
-	// on every success path too, which polluted stdout-consumers and broke
-	// TestCLIFlagCompatibility.
+	// on every success path too; callers that use cmd.CombinedOutput (like
+	// TestCLIFlagCompatibility) saw it merged into stdout and treated the
+	// output as invalid JSON.
 	if !result.AlreadyReported && (result.Err != nil || result.ExitCode != 0) {
 		if result.Err != nil {
 			fmt.Fprintf(ctx.StderrOrDefault(), "Error handling %s: %v\n", formatRobotFlag(flagName), result.Err)
