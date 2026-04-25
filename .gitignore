@@ -61,3 +61,6 @@ target-*/
 
 # NTM agent session artifacts
 .ntm/
+
+# Local Claude Code per-checkout settings
+.claude/settings.local.json
