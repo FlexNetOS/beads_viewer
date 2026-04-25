@@ -1067,9 +1067,14 @@ function parseLabelsJSON(labelsStr) {
 }
 
 function getGraphViewData() {
+  // Pull from issue_overview_mv so the graph sees the same active-blocker
+  // counts the issues view does — closing a blocker drops its dependents'
+  // blocker_count to 0 here too, which getNodeColor uses to derive the
+  // effective "blocked" colouring (bv-issue#143/#144).
   const issues = execQuery(`
-    SELECT id, title, description, status, priority, issue_type, assignee, labels, created_at, updated_at
-    FROM issues
+    SELECT id, title, description, status, priority, issue_type, assignee, labels,
+           created_at, updated_at, blocker_count, dependent_count
+    FROM issue_overview_mv
   `).map(row => ({
     id: row.id,
     title: row.title || '',
@@ -1081,6 +1086,10 @@ function getGraphViewData() {
     labels: parseLabelsJSON(row.labels),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    // Pre-computed active-blocker / active-dependent counts from the
+    // materialized view (which excludes closed/tombstoned endpoints).
+    blocker_count: row.blocker_count ?? 0,
+    dependent_count: row.dependent_count ?? 0,
   }));
 
   const dependencies = execQuery(`

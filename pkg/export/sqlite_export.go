@@ -330,17 +330,40 @@ func (e *SQLiteExporter) insertMetrics(db *sql.DB) error {
 	}
 	defer stmt.Close()
 
-	// Build dependency lookup maps
+	// Build status lookup so dep counts can ignore satisfied (closed/tombstoned)
+	// endpoints — an issue is no longer actively "blocked by" a closed blocker,
+	// and a closed issue no longer "blocks" anything (bv-issue#143/#144).
+	statusByID := make(map[string]model.Status, len(e.Issues))
+	for _, issue := range e.Issues {
+		if issue == nil {
+			continue
+		}
+		statusByID[issue.ID] = issue.Status
+	}
+	isResolved := func(id string) bool {
+		s := statusByID[id]
+		return s.IsClosed() || s.IsTombstone()
+	}
+
+	// Build dependency lookup maps. Only count edges where both endpoints are
+	// still active so that closing a blocker actually unblocks its dependents
+	// in the materialized view (and in the graph's derived coloring).
 	blocksCount := make(map[string]int)
 	blockedByCount := make(map[string]int)
 	for _, dep := range e.Deps {
-		if dep != nil && dep.Type.IsBlocking() {
-			// dep.IssueID depends on dep.DependsOnID, so:
-			// - DependsOnID blocks IssueID
-			// - IssueID is blocked by DependsOnID
-			blocksCount[dep.DependsOnID]++
-			blockedByCount[dep.IssueID]++
+		if dep == nil || !dep.Type.IsBlocking() {
+			continue
 		}
+		// dep.IssueID depends on dep.DependsOnID, so:
+		// - DependsOnID blocks IssueID
+		// - IssueID is blocked by DependsOnID
+		// Skip the count if either end is resolved: a closed blocker no longer
+		// blocks anything, and a closed dependent doesn't need unblocking.
+		if isResolved(dep.DependsOnID) || isResolved(dep.IssueID) {
+			continue
+		}
+		blocksCount[dep.DependsOnID]++
+		blockedByCount[dep.IssueID]++
 	}
 
 	// Get triage scores if available
