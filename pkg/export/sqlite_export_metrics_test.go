@@ -266,6 +266,77 @@ func TestSQLiteExporter_ResolvedBlockerExcludedFromCounts(t *testing.T) {
 	}
 }
 
+// TestSQLiteExporter_DanglingDepIgnored locks the consistency contract
+// between the Go-side issue_metrics counts and the SQL-side
+// issue_overview_mv id lists: a dependency edge whose other endpoint
+// isn't in the export's issue universe must be excluded from both
+// surfaces. Pre-fix, the materialized view's `JOIN issues` dropped
+// dangling refs but the Go counter happily counted them, so an issue
+// could end up with `blocked_by_count = 2` while
+// `blocked_by_ids = "C"` (length 1) for the same row.
+func TestSQLiteExporter_DanglingDepIgnored(t *testing.T) {
+	now := time.Now().UTC()
+	issues := []*model.Issue{
+		{
+			ID: "A", Title: "A", Status: model.StatusOpen, Priority: 1,
+			IssueType: model.TypeTask, CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "C", Title: "C", Status: model.StatusOpen, Priority: 2,
+			IssueType: model.TypeTask, CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	deps := []*model.Dependency{
+		// dangling: GHOST is referenced but not present in `issues`.
+		{IssueID: "A", DependsOnID: "GHOST", Type: model.DepBlocks, CreatedAt: now, CreatedBy: "test"},
+		// real edge: should still count.
+		{IssueID: "A", DependsOnID: "C", Type: model.DepBlocks, CreatedAt: now, CreatedBy: "test"},
+	}
+
+	stats := analysis.NewGraphStatsForTest(
+		map[string]float64{"A": 0.5, "C": 0.5},
+		map[string]float64{"A": 0, "C": 0},
+		nil, nil, nil,
+		map[string]float64{"A": 1, "C": 0},
+		map[string]int{"A": 2, "C": 0},
+		map[string]int{"A": 0, "C": 1},
+		nil, 0, []string{"C", "A"},
+	)
+
+	exporter := NewSQLiteExporter(issues, deps, stats, nil)
+	exporter.Config.IncludeRobotOutputs = false
+	outDir := t.TempDir()
+	if err := exporter.Export(outDir); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	dbPath := filepath.Join(outDir, "beads.sqlite3")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("Open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var blockedByA int
+	if err := db.QueryRow(
+		`SELECT blocked_by_count FROM issue_metrics WHERE issue_id = ?`, "A",
+	).Scan(&blockedByA); err != nil {
+		t.Fatalf("Scan A metrics: %v", err)
+	}
+	if blockedByA != 1 {
+		t.Fatalf("A.blocked_by_count: dangling GHOST must be excluded, expected 1 (C only), got %d", blockedByA)
+	}
+
+	var ids sql.NullString
+	if err := db.QueryRow(
+		`SELECT blocked_by_ids FROM issue_overview_mv WHERE id = ?`, "A",
+	).Scan(&ids); err != nil {
+		t.Fatalf("Scan mv: %v", err)
+	}
+	if !ids.Valid || ids.String != "C" {
+		t.Fatalf("blocked_by_ids in mv: expected \"C\", got valid=%v value=%q", ids.Valid, ids.String)
+	}
+}
+
 func TestSQLiteExporter_writeRobotOutputs_WritesExpectedFiles(t *testing.T) {
 	now := time.Now().UTC()
 	issues := []*model.Issue{{

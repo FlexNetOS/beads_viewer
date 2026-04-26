@@ -332,9 +332,12 @@ func (e *SQLiteExporter) insertMetrics(db *sql.DB) error {
 	}
 	defer stmt.Close()
 
-	// Build status lookup so dep counts can ignore satisfied (closed/tombstoned)
-	// endpoints — an issue is no longer actively "blocked by" a closed blocker,
-	// and a closed issue no longer "blocks" anything (bv-issue#143/#144).
+	// Build status lookup so dep counts can ignore satisfied (closed/
+	// tombstoned) endpoints, and so dangling refs (an edge whose other
+	// end isn't in this export's issue universe) are excluded — keeping
+	// these counts consistent with the materialized view, which uses
+	// `JOIN issues i2 ON ...` for the same lists and therefore drops
+	// any edge whose endpoint isn't a known issue (bv-issue#143/#144).
 	statusByID := make(map[string]model.Status, len(e.Issues))
 	for _, issue := range e.Issues {
 		if issue == nil {
@@ -342,14 +345,23 @@ func (e *SQLiteExporter) insertMetrics(db *sql.DB) error {
 		}
 		statusByID[issue.ID] = issue.Status
 	}
-	isResolved := func(id string) bool {
-		s := statusByID[id]
-		return s.IsClosed() || s.IsTombstone()
+	// isActiveCounterpart returns true when `id` is a known issue that
+	// is neither closed nor tombstoned. Unknown ids return false so a
+	// dangling dep edge doesn't get counted on either side.
+	isActiveCounterpart := func(id string) bool {
+		s, ok := statusByID[id]
+		if !ok {
+			return false
+		}
+		return !s.IsClosed() && !s.IsTombstone()
 	}
 
-	// Build dependency lookup maps. Only count edges where both endpoints are
-	// still active so that closing a blocker actually unblocks its dependents
-	// in the materialized view (and in the graph's derived coloring).
+	// Build dependency lookup maps. Count an edge only when *both*
+	// endpoints are active issues — closing a blocker drops its
+	// dependents' blocked_by_count to zero (the user-visible bug),
+	// and a dep whose other end fell out of the export at all
+	// shouldn't pad the counts above what the materialized view
+	// surfaces.
 	blocksCount := make(map[string]int)
 	blockedByCount := make(map[string]int)
 	for _, dep := range e.Deps {
@@ -359,9 +371,7 @@ func (e *SQLiteExporter) insertMetrics(db *sql.DB) error {
 		// dep.IssueID depends on dep.DependsOnID, so:
 		// - DependsOnID blocks IssueID
 		// - IssueID is blocked by DependsOnID
-		// Skip the count if either end is resolved: a closed blocker no longer
-		// blocks anything, and a closed dependent doesn't need unblocking.
-		if isResolved(dep.DependsOnID) || isResolved(dep.IssueID) {
+		if !isActiveCounterpart(dep.DependsOnID) || !isActiveCounterpart(dep.IssueID) {
 			continue
 		}
 		blocksCount[dep.DependsOnID]++
