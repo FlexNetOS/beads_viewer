@@ -66,6 +66,7 @@ type Recommendation struct {
 	Title       string         `json:"title"`
 	Type        string         `json:"type"`
 	Status      string         `json:"status"`
+	Assignee    string         `json:"assignee,omitempty"`
 	Priority    int            `json:"priority"`
 	Labels      []string       `json:"labels"`
 	Score       float64        `json:"score"`
@@ -787,6 +788,7 @@ func buildRecommendationsFromTriageScores(scores []TriageScore, ctx *TriageConte
 			Title:       score.Title,
 			Type:        string(issue.IssueType),
 			Status:      score.Status,
+			Assignee:    issue.Assignee,
 			Priority:    score.Priority,
 			Labels:      issue.Labels,
 			Score:       score.TriageScore,
@@ -995,8 +997,7 @@ func buildBlockersToClearWithContext(ctx *TriageContext, unblocksMap map[string]
 func buildTopPicks(recommendations []Recommendation, limit int) []TopPick {
 	picks := make([]TopPick, 0, limit)
 	for _, rec := range recommendations {
-		// Skip blocked items - they can't be worked on yet
-		if len(rec.BlockedBy) > 0 {
+		if !isClaimableRecommendation(rec) {
 			continue
 		}
 		picks = append(picks, TopPick{
@@ -1012,6 +1013,10 @@ func buildTopPicks(recommendations []Recommendation, limit int) []TopPick {
 	}
 
 	return picks
+}
+
+func isClaimableRecommendation(rec Recommendation) bool {
+	return rec.Status == string(model.StatusOpen) && rec.Assignee == "" && len(rec.BlockedBy) == 0
 }
 
 // buildGraphHealth constructs graph health metrics from stats
@@ -1375,6 +1380,10 @@ func GenerateTriageReasons(ctx TriageReasonContext) TriageReasons {
 	actionHint := "Start work on this issue"
 	if ctx.Issue != nil && ctx.Issue.Status == model.StatusInProgress {
 		actionHint = "Continue work on this issue"
+	} else if ctx.Issue != nil && ctx.Issue.Status == model.StatusBlocked {
+		actionHint = "Resolve blocked status before claiming this issue"
+	} else if ctx.Issue != nil && ctx.Issue.Status != "" && ctx.Issue.Status != model.StatusOpen {
+		actionHint = fmt.Sprintf("Wait for status %s to become open before claiming", ctx.Issue.Status)
 	}
 
 	// 1. Unblock cascade (highest priority - most actionable)
@@ -1451,6 +1460,12 @@ func GenerateTriageReasons(ctx TriageReasonContext) TriageReasons {
 
 	// 6. Agent claim status
 	isInProgress := ctx.Issue != nil && ctx.Issue.Status == model.StatusInProgress
+	isBlockedStatus := ctx.Issue != nil && ctx.Issue.Status == model.StatusBlocked
+	isNonOpenStatus := ctx.Issue != nil &&
+		ctx.Issue.Status != "" &&
+		ctx.Issue.Status != model.StatusOpen &&
+		!isInProgress &&
+		!isBlockedStatus
 	if isInProgress {
 		if ctx.ClaimedByAgent != "" {
 			reason := fmt.Sprintf("👤 Claimed by %s", ctx.ClaimedByAgent)
@@ -1458,6 +1473,21 @@ func GenerateTriageReasons(ctx TriageReasonContext) TriageReasons {
 			actionHint = fmt.Sprintf("Contact %s if you want to help", ctx.ClaimedByAgent)
 		} else {
 			reasons = append(reasons, "🚧 In progress - already being worked")
+		}
+	} else if isBlockedStatus {
+		reasons = append(reasons, "⛔ Status is blocked - not ready to claim")
+		if ctx.ClaimedByAgent != "" {
+			reason := fmt.Sprintf("👤 Claimed by %s", ctx.ClaimedByAgent)
+			reasons = append(reasons, reason)
+			actionHint = fmt.Sprintf("Contact %s or resolve blockers before claiming", ctx.ClaimedByAgent)
+		}
+	} else if isNonOpenStatus {
+		reason := fmt.Sprintf("⏸️ Status is %s - not ready to claim", ctx.Issue.Status)
+		reasons = append(reasons, reason)
+		if ctx.ClaimedByAgent != "" {
+			claimReason := fmt.Sprintf("👤 Claimed by %s", ctx.ClaimedByAgent)
+			reasons = append(reasons, claimReason)
+			actionHint = fmt.Sprintf("Contact %s if you want to help", ctx.ClaimedByAgent)
 		}
 	} else if ctx.ClaimedByAgent == "" {
 		reasons = append(reasons, "✅ Currently unclaimed - available for work")
@@ -1526,12 +1556,17 @@ func GenerateTriageReasonsForScore(score TriageScore, triageCtx *TriageContext) 
 
 	// Determine if this is a quick win based on factors
 	isQuickWin := score.TriageFactors.QuickWinBoost > 0.05
+	claimedByAgent := ""
+	if issue != nil {
+		claimedByAgent = issue.Assignee
+	}
 
 	ctx := TriageReasonContext{
 		Issue:           issue,
 		TriageScore:     &score,
 		UnblocksIDs:     unblocksMap[score.IssueID],
 		BlockedByIDs:    triageCtx.OpenBlockers(score.IssueID), // cached
+		ClaimedByAgent:  claimedByAgent,
 		DaysSinceUpdate: daysSinceUpdate,
 		IsQuickWin:      isQuickWin,
 		BlockerDepth:    triageCtx.BlockerDepth(score.IssueID), // cached
@@ -1635,7 +1670,7 @@ func buildRecommendationsByTrack(recs []Recommendation, analyzer *Analyzer, unbl
 		group.TotalUnblocks += len(unblocksMap[rec.ID])
 
 		// Update top pick (highest score in this layer)
-		if group.TopPick == nil || rec.Score > group.TopPick.Score {
+		if isClaimableRecommendation(rec) && (group.TopPick == nil || rec.Score > group.TopPick.Score) {
 			group.TopPick = &TopPick{
 				ID:       rec.ID,
 				Title:    rec.Title,
@@ -1695,7 +1730,7 @@ func buildRecommendationsByLabel(recs []Recommendation, unblocksMap map[string][
 		group.Recommendations = append(group.Recommendations, rec)
 		group.TotalUnblocks += len(unblocksMap[rec.ID])
 
-		if group.TopPick == nil || rec.Score > group.TopPick.Score {
+		if isClaimableRecommendation(rec) && (group.TopPick == nil || rec.Score > group.TopPick.Score) {
 			group.TopPick = &TopPick{
 				ID:       rec.ID,
 				Title:    rec.Title,
