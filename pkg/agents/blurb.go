@@ -55,6 +55,8 @@ bv --robot-next          # Minimal: just the single top pick + claim command
 bv --robot-triage --format toon
 ` + "```" + `
 
+Before claiming, verify current state with ` + "`" + `br show <id> --json` + "`" + ` or ` + "`" + `br ready --json` + "`" + `. ` + "`" + `recommendations` + "`" + ` can include graph-important blocked or assigned work; only ` + "`" + `quick_ref.top_picks` + "`" + ` and non-empty ` + "`" + `claim_command` + "`" + ` fields represent claimable work.
+
 #### Other bv Commands
 
 | Command | Returns |
