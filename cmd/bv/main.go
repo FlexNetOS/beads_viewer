@@ -542,7 +542,11 @@ func main() {
 	relationsLimit := flag.Int("relations-limit", 10, "Max related files to show")
 	// Related work discovery flag (bv-jtdl)
 	robotRelatedWork := flag.String("robot-related", "", "Output beads related to a specific bead ID as JSON")
-	relatedMinRelevance := flag.Int("related-min-relevance", 20, "Minimum relevance score (0-100) for related work")
+	// Accepts EITHER int 0-100 (percent) OR float 0.0-1.0 (fraction). The
+	// sibling --relations-threshold uses fraction; this dual form removes the
+	// silent-failure trap when an agent or user reaches for the wrong unit.
+	relatedMinRelevanceFlag := newPercentOrFraction("related-min-relevance", 20)
+	flag.Var(relatedMinRelevanceFlag, "related-min-relevance", "Minimum relevance score for related work (int 0-100 percent OR float 0.0-1.0 fraction)")
 	relatedMaxResults := flag.Int("related-max-results", 10, "Max results per category for related work")
 	relatedIncludeClosed := flag.Bool("related-include-closed", false, "Include closed beads in related work results")
 	// Blocker chain analysis flag (bv-nlo0)
@@ -684,7 +688,7 @@ func main() {
 		AttentionLimit:          attentionLimit,
 		RelationsThreshold:      relationsThreshold,
 		RelationsLimit:          relationsLimit,
-		RelatedMinRelevance:     relatedMinRelevance,
+		RelatedMinRelevance:     &relatedMinRelevanceFlag.val,
 		RelatedMaxResults:       relatedMaxResults,
 		RelatedIncludeClosed:    relatedIncludeClosed,
 		NetworkDepth:            networkDepth,
@@ -3723,7 +3727,7 @@ func main() {
 
 			// Configure options
 			opts := correlation.RelatedWorkOptions{
-				MinRelevance:      *relatedMinRelevance,
+				MinRelevance:      relatedMinRelevanceFlag.Value(),
 				MaxResults:        *relatedMaxResults,
 				ConcurrencyWindow: 7 * 24 * time.Hour,
 				IncludeClosed:     *relatedIncludeClosed,
