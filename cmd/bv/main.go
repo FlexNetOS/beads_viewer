@@ -8000,12 +8000,14 @@ func estimateTokens(s string) int {
 }
 
 type robotCommandDoc struct {
-	Flag        string   `json:"flag"`
-	Description string   `json:"description"`
-	KeyFields   []string `json:"key_fields,omitempty"`
-	Params      []string `json:"params,omitempty"`
-	NeedsIssues bool     `json:"needs_issues"`
-	NeedsGit    bool     `json:"needs_git"`
+	Flag          string   `json:"flag"`
+	Description   string   `json:"description"`
+	KeyFields     []string `json:"key_fields,omitempty"`
+	Params        []string `json:"params,omitempty"`
+	NeedsIssues   bool     `json:"needs_issues"`
+	NeedsGit      bool     `json:"needs_git"`
+	NeedsSprint   bool     `json:"needs_sprint"`
+	NeedsBaseline bool     `json:"needs_baseline"`
 }
 
 func robotDocsTopics() []string {
@@ -8243,6 +8245,7 @@ func robotCommandDocs() map[string]robotCommandDoc {
 			Flag:        "--robot-sprint-show <id>",
 			Description: "Show details for a specific sprint.",
 			NeedsIssues: true,
+			NeedsSprint: true,
 		},
 		"robot-forecast": {
 			Flag: "--robot-forecast <id|all>", Description: "ETA predictions for bead completion.",
@@ -8258,11 +8261,13 @@ func robotCommandDocs() map[string]robotCommandDoc {
 			Flag:        "--robot-burndown <sprint|current>",
 			Description: "Sprint burndown data.",
 			NeedsIssues: true,
+			NeedsSprint: true,
 		},
 		"robot-drift": {
-			Flag:        "--robot-drift",
-			Description: "Drift detection from saved baseline.",
-			NeedsIssues: true,
+			Flag:          "--robot-drift",
+			Description:   "Drift detection from saved baseline.",
+			NeedsIssues:   true,
+			NeedsBaseline: true,
 		},
 		"robot-impact": {
 			Flag:        "--robot-impact <path[,path...]>",
@@ -8286,18 +8291,20 @@ func generateRobotCapabilities() map[string]interface{} {
 		doc := docs[name]
 		entry := map[string]interface{}{
 			"name":                 name,
-			"flag":                 robotFlagExampleForm(doc.Flag),
+			"flag":                 robotFlagExampleFormForCommand(name, doc.Flag),
 			"description":          doc.Description,
 			"preferred_invocation": preferredRobotInvocation(name, doc),
 			"accepted_invocations": acceptedRobotInvocations(name, doc),
 			"needs_issues":         doc.NeedsIssues,
 			"needs_git":            doc.NeedsGit,
+			"needs_sprint":         doc.NeedsSprint,
+			"needs_baseline":       doc.NeedsBaseline,
 		}
 		if len(doc.KeyFields) > 0 {
 			entry["key_fields"] = doc.KeyFields
 		}
 		if len(doc.Params) > 0 {
-			entry["params"] = robotExampleForms(doc.Params)
+			entry["params"] = robotExampleFormsForCommand(name, doc.Params)
 		}
 		commands = append(commands, entry)
 	}
@@ -8326,7 +8333,7 @@ func preferredRobotInvocation(commandName string, doc robotCommandDoc) string {
 	if invocation := preferredRobotInvocationOverride(commandName); invocation != "" {
 		return invocation
 	}
-	return "bv " + commandName + robotCommandArgumentSuffix(doc) + " --json"
+	return "bv " + commandName + robotCommandArgumentSuffix(commandName, doc) + " --json"
 }
 
 func acceptedRobotInvocations(commandName string, doc robotCommandDoc) []string {
@@ -8334,7 +8341,7 @@ func acceptedRobotInvocations(commandName string, doc robotCommandDoc) []string 
 		return invocations
 	}
 	return []string{
-		"bv " + robotFlagExampleForm(doc.Flag) + " --format json",
+		"bv " + robotFlagExampleFormForCommand(commandName, doc.Flag) + " --format json",
 		preferredRobotInvocation(commandName, doc),
 	}
 }
@@ -8416,18 +8423,18 @@ func acceptedRobotInvocationOverrides(commandName string) []string {
 	}
 }
 
-func robotCommandArgumentSuffix(doc robotCommandDoc) string {
-	parts := strings.Fields(robotFlagExampleForm(doc.Flag))
+func robotCommandArgumentSuffix(commandName string, doc robotCommandDoc) string {
+	parts := strings.Fields(robotFlagExampleFormForCommand(commandName, doc.Flag))
 	if len(parts) <= 1 {
 		return ""
 	}
 	return " " + strings.Join(parts[1:], " ")
 }
 
-func robotExampleForms(values []string) []string {
+func robotExampleFormsForCommand(commandName string, values []string) []string {
 	examples := make([]string, 0, len(values))
 	for _, value := range values {
-		examples = append(examples, robotFlagExampleForm(value))
+		examples = append(examples, robotFlagExampleFormForCommand(commandName, value))
 	}
 	return examples
 }
@@ -8436,13 +8443,25 @@ func robotCommandDocsForAgentOutput() map[string]robotCommandDoc {
 	raw := robotCommandDocs()
 	docs := make(map[string]robotCommandDoc, len(raw))
 	for name, doc := range raw {
-		doc.Flag = robotFlagExampleForm(doc.Flag)
+		doc.Flag = robotFlagExampleFormForCommand(name, doc.Flag)
 		if len(doc.Params) > 0 {
-			doc.Params = robotExampleForms(doc.Params)
+			doc.Params = robotExampleFormsForCommand(name, doc.Params)
 		}
 		docs[name] = doc
 	}
 	return docs
+}
+
+func robotFlagExampleFormForCommand(commandName, flag string) string {
+	switch commandName {
+	case "robot-sprint-show":
+		flag = strings.ReplaceAll(flag, "<id>", "SPRINT_ID")
+	case "robot-burndown":
+		flag = strings.ReplaceAll(flag, "<sprint|current>", "current")
+	case "robot-forecast":
+		flag = strings.ReplaceAll(flag, "--forecast-sprint <id>", "--forecast-sprint SPRINT_ID")
+	}
+	return robotFlagExampleForm(flag)
 }
 
 func robotFlagExampleForm(flag string) string {
