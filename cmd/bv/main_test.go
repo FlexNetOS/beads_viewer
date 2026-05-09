@@ -431,16 +431,19 @@ func TestRobotCapabilitiesManifest(t *testing.T) {
 	if !ok {
 		t.Fatalf("commands has unexpected type %T", capabilities["commands"])
 	}
-	seen := map[string]bool{}
+	seen := map[string]map[string]interface{}{}
 	for _, command := range commands {
 		name, _ := command["name"].(string)
-		seen[name] = true
+		seen[name] = command
 	}
 	for _, name := range []string{"robot-triage", "robot-capabilities", "robot-schema", "robot-related", "robot-file-hotspots"} {
-		if !seen[name] {
+		if seen[name] == nil {
 			t.Fatalf("capabilities missing command %q", name)
 		}
 	}
+	requireString(t, seen["robot-triage"]["preferred_invocation"].(string), "bv robot-triage --json")
+	requireContainsString(t, seen["robot-triage"]["accepted_invocations"].([]string), "bv --robot-triage --format json")
+	requireContainsString(t, seen["robot-related"]["accepted_invocations"].([]string), "bv robot-related <id> --json")
 	if _, ok := capabilities["environment_variables"].(map[string]string); !ok {
 		t.Fatalf("environment_variables has unexpected type %T", capabilities["environment_variables"])
 	}
@@ -696,6 +699,16 @@ func requireString(t *testing.T, got, want string) {
 	if strings.Compare(got, want) != 0 {
 		t.Fatalf("got %q, want %q", got, want)
 	}
+}
+
+func requireContainsString(t *testing.T, got []string, want string) {
+	t.Helper()
+	for _, value := range got {
+		if strings.Compare(value, want) == 0 {
+			return
+		}
+	}
+	t.Fatalf("%#v does not contain %q", got, want)
 }
 
 func requireArgs(t *testing.T, got, want []string) {

@@ -7980,10 +7980,12 @@ func generateRobotCapabilities() map[string]interface{} {
 	for _, name := range names {
 		doc := docs[name]
 		entry := map[string]interface{}{
-			"name":         name,
-			"flag":         doc.Flag,
-			"description":  doc.Description,
-			"needs_issues": doc.NeedsIssues,
+			"name":                 name,
+			"flag":                 doc.Flag,
+			"description":          doc.Description,
+			"preferred_invocation": preferredRobotInvocation(name, doc),
+			"accepted_invocations": acceptedRobotInvocations(name, doc),
+			"needs_issues":         doc.NeedsIssues,
 		}
 		if len(doc.KeyFields) > 0 {
 			entry["key_fields"] = doc.KeyFields
@@ -8012,6 +8014,25 @@ func generateRobotCapabilities() map[string]interface{} {
 			"stderr": "Diagnostics, warnings, and actionable errors.",
 		},
 	}
+}
+
+func preferredRobotInvocation(commandName string, doc robotCommandDoc) string {
+	return "bv " + commandName + robotCommandArgumentSuffix(doc) + " --json"
+}
+
+func acceptedRobotInvocations(commandName string, doc robotCommandDoc) []string {
+	return []string{
+		"bv " + doc.Flag + " --format json",
+		preferredRobotInvocation(commandName, doc),
+	}
+}
+
+func robotCommandArgumentSuffix(doc robotCommandDoc) string {
+	parts := strings.Fields(doc.Flag)
+	if len(parts) <= 1 {
+		return ""
+	}
+	return " " + strings.Join(parts[1:], " ")
 }
 
 func agentIntentAliasDocs() []map[string]string {
