@@ -721,6 +721,39 @@ func TestRobotCapabilitiesSchemaDocumentsCommandMetadata(t *testing.T) {
 	}
 }
 
+func TestRobotDiffSchemaMatchesHandlerEnvelope(t *testing.T) {
+	schemas := generateRobotSchemas()
+	schema := schemas.Commands["robot-diff"]
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-diff properties has unexpected type %T", schema["properties"])
+	}
+	for _, name := range []string{"resolved_revision", "from_data_hash", "to_data_hash", "diff"} {
+		if properties[name] == nil {
+			t.Fatalf("robot-diff schema missing top-level property %q", name)
+		}
+	}
+	for _, stale := range []string{"since", "since_commit", "new", "closed", "modified", "cycles"} {
+		if properties[stale] != nil {
+			t.Fatalf("robot-diff schema still exposes stale top-level property %q", stale)
+		}
+	}
+
+	diffProp, ok := properties["diff"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("diff property has unexpected type %T", properties["diff"])
+	}
+	diffProperties, ok := diffProp["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("diff nested properties has unexpected type %T", diffProp["properties"])
+	}
+	for _, name := range []string{"new_issues", "closed_issues", "removed_issues", "modified_issues", "metric_deltas", "summary"} {
+		if diffProperties[name] == nil {
+			t.Fatalf("robot-diff nested schema missing %q", name)
+		}
+	}
+}
+
 func TestModifierFlagValidation(t *testing.T) {
 	exe := buildTestBinary(t)
 	tmpDir := t.TempDir()
