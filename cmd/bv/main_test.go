@@ -345,6 +345,11 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--robot-triage", "--format", "toon"},
 		},
 		{
+			name: "toon false keeps structured output without forcing toon",
+			args: []string{"--toon=false"},
+			want: []string{"--robot-triage", "--format=json"},
+		},
+		{
 			name: "output toon defaults to triage",
 			args: []string{"--output=toon"},
 			want: []string{"--robot-triage", "--format=toon"},
@@ -487,6 +492,7 @@ func TestAgentIntentAliasesOutputJSON(t *testing.T) {
 		{"graph", "--json", "mermaid"},
 		{"--name", "backend", "--json"},
 		{"--json=false"},
+		{"--toon=false"},
 	} {
 		stdout, stderr, err := runCommandWithTimeout(t, tmpDir, exe, args...)
 		if err != nil {

@@ -854,7 +854,7 @@ func rewriteLeadingAgentIntentEqualsAlias(arg, context string) (string, bool) {
 	case arg == "--toon=true":
 		return "--format=toon", true
 	case arg == "--toon=false":
-		return "--format=toon", true
+		return "--format=json", true
 	case strings.HasPrefix(arg, "--output="):
 		value := strings.TrimPrefix(arg, "--output=")
 		if isRobotOutputFormat(value) {
