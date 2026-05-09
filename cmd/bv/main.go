@@ -8008,6 +8008,7 @@ type robotCommandDoc struct {
 	NeedsGit      bool     `json:"needs_git"`
 	NeedsSprint   bool     `json:"needs_sprint"`
 	NeedsBaseline bool     `json:"needs_baseline"`
+	MutatesState  bool     `json:"mutates_state"`
 }
 
 func robotDocsTopics() []string {
@@ -8145,18 +8146,20 @@ func robotCommandDocs() map[string]robotCommandDoc {
 			NeedsGit:    true,
 		},
 		"robot-confirm-correlation": {
-			Flag:        "--robot-confirm-correlation <sha:bead>",
-			Description: "Record positive feedback for a commit-to-bead correlation.",
-			Params:      []string{"--correlation-by agent", "--correlation-reason verified"},
-			NeedsIssues: true,
-			NeedsGit:    true,
+			Flag:         "--robot-confirm-correlation <sha:bead>",
+			Description:  "Record positive feedback for a commit-to-bead correlation.",
+			Params:       []string{"--correlation-by agent", "--correlation-reason verified"},
+			NeedsIssues:  true,
+			NeedsGit:     true,
+			MutatesState: true,
 		},
 		"robot-reject-correlation": {
-			Flag:        "--robot-reject-correlation <sha:bead>",
-			Description: "Record negative feedback for a commit-to-bead correlation.",
-			Params:      []string{"--correlation-by agent", "--correlation-reason unrelated"},
-			NeedsIssues: true,
-			NeedsGit:    true,
+			Flag:         "--robot-reject-correlation <sha:bead>",
+			Description:  "Record negative feedback for a commit-to-bead correlation.",
+			Params:       []string{"--correlation-by agent", "--correlation-reason unrelated"},
+			NeedsIssues:  true,
+			NeedsGit:     true,
+			MutatesState: true,
 		},
 		"robot-search": {
 			Flag: "--robot-search", Description: "Semantic vector search over issue titles and descriptions.",
@@ -8299,6 +8302,7 @@ func generateRobotCapabilities() map[string]interface{} {
 			"needs_git":            doc.NeedsGit,
 			"needs_sprint":         doc.NeedsSprint,
 			"needs_baseline":       doc.NeedsBaseline,
+			"mutates_state":        doc.MutatesState,
 		}
 		if len(doc.KeyFields) > 0 {
 			entry["key_fields"] = doc.KeyFields

@@ -555,6 +555,15 @@ func TestRobotCapabilitiesManifest(t *testing.T) {
 	if seen["robot-drift"]["needs_baseline"] != true {
 		t.Fatalf("robot-drift needs_baseline = %v, want true", seen["robot-drift"]["needs_baseline"])
 	}
+	if seen["robot-confirm-correlation"]["mutates_state"] != true {
+		t.Fatalf("robot-confirm-correlation mutates_state = %v, want true", seen["robot-confirm-correlation"]["mutates_state"])
+	}
+	if seen["robot-reject-correlation"]["mutates_state"] != true {
+		t.Fatalf("robot-reject-correlation mutates_state = %v, want true", seen["robot-reject-correlation"]["mutates_state"])
+	}
+	if seen["robot-explain-correlation"]["mutates_state"] != false {
+		t.Fatalf("robot-explain-correlation mutates_state = %v, want false", seen["robot-explain-correlation"]["mutates_state"])
+	}
 	requireContainsString(t, seen["robot-forecast"]["params"].([]string), "--forecast-sprint SPRINT_ID")
 	requireString(t, seen["robot-confirm-correlation"]["preferred_invocation"].(string), "bv robot-confirm-correlation deadbeef:ISSUE_ID --correlation-by agent --json")
 	requireString(t, seen["robot-search"]["preferred_invocation"].(string), `bv robot-search "login oauth" --json`)
