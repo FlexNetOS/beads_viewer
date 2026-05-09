@@ -691,6 +691,36 @@ func TestRobotSchemaCoversDocumentedRobotCommands(t *testing.T) {
 	}
 }
 
+func TestRobotCapabilitiesSchemaDocumentsCommandMetadata(t *testing.T) {
+	schemas := generateRobotSchemas()
+	schema := schemas.Commands["robot-capabilities"]
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-capabilities properties has unexpected type %T", schema["properties"])
+	}
+	if properties["commands"] == nil {
+		t.Fatalf("robot-capabilities schema missing commands property")
+	}
+
+	commandsProp, ok := properties["commands"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("commands property has unexpected type %T", properties["commands"])
+	}
+	items, ok := commandsProp["items"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("commands items has unexpected type %T", commandsProp["items"])
+	}
+	commandProperties, ok := items["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("command properties has unexpected type %T", items["properties"])
+	}
+	for _, name := range []string{"preferred_invocation", "accepted_invocations", "needs_git", "needs_sprint", "needs_baseline", "mutates_state"} {
+		if commandProperties[name] == nil {
+			t.Fatalf("robot-capabilities command schema missing %q", name)
+		}
+	}
+}
+
 func TestModifierFlagValidation(t *testing.T) {
 	exe := buildTestBinary(t)
 	tmpDir := t.TempDir()

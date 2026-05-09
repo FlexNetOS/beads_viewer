@@ -8651,6 +8651,7 @@ func generateRobotSchemas() RobotSchemas {
 	}
 
 	commands := map[string]map[string]interface{}{
+		"robot-capabilities": robotCapabilitiesSchema(),
 		"robot-triage": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Triage Output",
@@ -8890,6 +8891,54 @@ func generateRobotSchemas() RobotSchemas {
 		GeneratedAt:   now,
 		Envelope:      envelope,
 		Commands:      commands,
+	}
+}
+
+func robotCapabilitiesSchema() map[string]interface{} {
+	commandProperties := map[string]interface{}{
+		"name":                 map[string]interface{}{"type": "string"},
+		"flag":                 map[string]interface{}{"type": "string"},
+		"description":          map[string]interface{}{"type": "string"},
+		"preferred_invocation": map[string]interface{}{"type": "string"},
+		"accepted_invocations": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		"needs_issues":         map[string]interface{}{"type": "boolean"},
+		"needs_git":            map[string]interface{}{"type": "boolean"},
+		"needs_sprint":         map[string]interface{}{"type": "boolean"},
+		"needs_baseline":       map[string]interface{}{"type": "boolean"},
+		"mutates_state":        map[string]interface{}{"type": "boolean"},
+		"key_fields":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		"params":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+	}
+
+	return map[string]interface{}{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Robot Capabilities Output",
+		"description": "Machine-readable command manifest for agent command discovery.",
+		"type":        "object",
+		"properties": map[string]interface{}{
+			"generated_at":          map[string]interface{}{"type": "string", "format": "date-time"},
+			"tool":                  map[string]interface{}{"type": "string"},
+			"version":               map[string]interface{}{"type": "string"},
+			"contract_version":      map[string]interface{}{"type": "string"},
+			"default_robot_command": map[string]interface{}{"type": "string"},
+			"output_formats":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"commands": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type":                 "object",
+					"properties":           commandProperties,
+					"required":             []string{"name", "flag", "description", "preferred_invocation", "accepted_invocations", "needs_issues", "needs_git", "needs_sprint", "needs_baseline", "mutates_state"},
+					"additionalProperties": true,
+				},
+			},
+			"docs_topics":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"schema_command":        map[string]interface{}{"type": "string"},
+			"agent_intent_aliases":  map[string]interface{}{"type": "array"},
+			"environment_variables": map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
+			"exit_codes":            map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
+			"stream_contract":       map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
+		},
+		"required": []string{"generated_at", "tool", "version", "contract_version", "commands", "environment_variables", "exit_codes"},
 	}
 }
 
