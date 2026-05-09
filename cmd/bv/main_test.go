@@ -561,6 +561,36 @@ func TestRobotDocsUnknownTopicSuggestsNearestTopic(t *testing.T) {
 	}
 }
 
+func TestRobotDocsPreferSafeAgentCommandExamples(t *testing.T) {
+	guideDocs := generateRobotDocs("guide")
+	guide, ok := guideDocs["guide"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("guide has unexpected type %T", guideDocs["guide"])
+	}
+	quickstart, ok := guide["quickstart"].([]string)
+	if !ok {
+		t.Fatalf("quickstart has unexpected type %T", guide["quickstart"])
+	}
+	requireContainsString(t, quickstart, "bv robot-triage --json           # Full triage with recommendations")
+	requireContainsString(t, quickstart, "bv robot-capabilities --json     # Machine-readable command manifest")
+
+	exampleDocs := generateRobotDocs("examples")
+	examples, ok := exampleDocs["examples"].([]map[string]string)
+	if !ok {
+		t.Fatalf("examples has unexpected type %T", exampleDocs["examples"])
+	}
+	commands := make([]string, 0, len(examples))
+	for _, example := range examples {
+		command := example["command"]
+		commands = append(commands, command)
+		if strings.Contains(command, "| sh") {
+			t.Fatalf("robot docs example auto-executes shell output: %s", command)
+		}
+	}
+	requireContainsString(t, commands, "bv robot-next --json | jq -r '.claim_command'")
+	requireContainsString(t, commands, `bv robot-search "authentication" --json`)
+}
+
 func TestRobotSchemaCoversDocumentedRobotCommands(t *testing.T) {
 	schemas := generateRobotSchemas()
 	for name := range robotCommandDocs() {

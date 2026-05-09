@@ -8392,15 +8392,15 @@ func generateRobotDocs(topic string) map[string]interface{} {
 	guide := map[string]interface{}{
 		"description": "bv (Beads Viewer) provides structural analysis of the beads issue tracker DAG. It is the primary interface for AI agents to understand project state, plan work, and discover high-impact tasks.",
 		"quickstart": []string{
-			"bv --robot-triage               # Full triage with recommendations",
-			"bv --robot-next                  # Single top pick for immediate work",
-			"bv --robot-plan                  # Dependency-respecting execution plan",
-			"bv --robot-insights              # Deep graph analysis (PageRank, betweenness, etc.)",
-			"bv --robot-triage-by-track       # Parallel work streams for multi-agent coordination",
-			"bv --robot-capabilities          # Machine-readable command manifest",
-			"bv --robot-schema                # JSON Schema definitions for all commands",
-			"bv triage --json                 # Agent-intent alias for --robot-triage",
-			"bv capabilities --json           # Agent-intent alias for --robot-capabilities",
+			"bv robot-triage --json           # Full triage with recommendations",
+			"bv robot-next --json             # Single top pick plus claim/show commands",
+			"bv robot-plan --json             # Dependency-respecting execution plan",
+			"bv robot-insights --json         # Deep graph analysis (PageRank, betweenness, etc.)",
+			"bv robot-triage-by-track --json  # Parallel work streams for multi-agent coordination",
+			"bv robot-capabilities --json     # Machine-readable command manifest",
+			"bv robot-schema --json           # JSON Schema definitions for all commands",
+			"bv triage --json                 # Short alias for robot-triage",
+			"bv capabilities --json           # Short alias for robot-capabilities",
 		},
 		"data_source": ".beads/issues.jsonl and git history (correlations)",
 		"output_modes": map[string]string{
@@ -8413,16 +8413,16 @@ func generateRobotDocs(topic string) map[string]interface{} {
 	commands := robotCommandDocs()
 
 	examples := []map[string]string{
-		{"description": "Get top 3 picks for immediate work", "command": "bv --robot-triage | jq '.triage.quick_ref.top_picks[:3]'"},
-		{"description": "Claim the top recommendation", "command": "bv --robot-next | jq -r '.claim_command' | sh"},
-		{"description": "Find high-impact blockers to clear", "command": "bv --robot-triage | jq '.triage.blockers_to_clear | map(.id)'"},
-		{"description": "Get bug-only recommendations", "command": "bv --robot-triage | jq '.triage.recommendations[] | select(.type == \"bug\")'"},
-		{"description": "Multi-agent: top pick per parallel track", "command": "bv --robot-triage-by-track | jq '.triage.recommendations_by_track[].top_pick'"},
-		{"description": "Find beads related to a specific file", "command": "bv --robot-file-beads src/main.rs"},
-		{"description": "Search for issues by keyword", "command": "bv --search 'authentication' --robot-search"},
-		{"description": "Get TOON output (saves tokens)", "command": "bv --robot-triage --format toon"},
-		{"description": "Use env for default format", "command": "BV_OUTPUT_FORMAT=toon bv --robot-triage"},
-		{"description": "Show token savings estimate", "command": "bv --robot-triage --format toon --stats"},
+		{"description": "Get top 3 picks for immediate work", "command": "bv robot-triage --json | jq '.triage.quick_ref.top_picks[:3]'"},
+		{"description": "Inspect the claim command for the top recommendation", "command": "bv robot-next --json | jq -r '.claim_command'"},
+		{"description": "Find high-impact blockers to clear", "command": "bv robot-triage --json | jq '.triage.blockers_to_clear | map(.id)'"},
+		{"description": "Get bug-only recommendations", "command": "bv robot-triage --json | jq '.triage.recommendations[] | select(.type == \"bug\")'"},
+		{"description": "Multi-agent: top pick per parallel track", "command": "bv robot-triage-by-track --json | jq '.triage.recommendations_by_track[].top_pick'"},
+		{"description": "Find beads related to a specific file", "command": "bv robot-file-beads README.md --json"},
+		{"description": "Search for issues by keyword", "command": `bv robot-search "authentication" --json`},
+		{"description": "Get TOON output (saves tokens)", "command": "bv robot-triage --toon"},
+		{"description": "Use env for default format", "command": "BV_OUTPUT_FORMAT=toon bv robot-triage --json"},
+		{"description": "Show token savings estimate", "command": "TOON_STATS=1 bv robot-triage --toon"},
 	}
 
 	envVars := robotEnvVars()
