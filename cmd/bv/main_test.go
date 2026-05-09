@@ -260,8 +260,28 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--robot-triage", "--format", "json", "--label", "backend", "--robot-max-results", "3"},
 		},
 		{
+			name: "canonical robot command name",
+			args: []string{"robot-triage", "--json"},
+			want: []string{"--robot-triage", "--format", "json"},
+		},
+		{
+			name: "canonical robot help with json becomes docs",
+			args: []string{"robot-help", "--json"},
+			want: []string{"--robot-docs", "guide", "--format", "json"},
+		},
+		{
+			name: "canonical grouped triage command name",
+			args: []string{"robot-triage-by-track", "--json", "--limit=2"},
+			want: []string{"--robot-triage-by-track", "--format", "json", "--robot-max-results=2"},
+		},
+		{
 			name: "schema subcommand",
 			args: []string{"schema", "triage", "--json"},
+			want: []string{"--robot-schema", "--schema-command", "robot-triage", "--format", "json"},
+		},
+		{
+			name: "canonical schema command name",
+			args: []string{"robot-schema", "triage", "--json"},
 			want: []string{"--robot-schema", "--schema-command", "robot-triage", "--format", "json"},
 		},
 		{
@@ -285,8 +305,18 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--search", "login oauth", "--robot-search", "--format", "json"},
 		},
 		{
+			name: "canonical search command name",
+			args: []string{"robot-search", "login", "oauth", "--json", "--limit", "5"},
+			want: []string{"--search", "login oauth", "--robot-search", "--format", "json", "--search-limit", "5"},
+		},
+		{
 			name: "graph format positional",
 			args: []string{"graph", "mermaid", "--output", "json"},
+			want: []string{"--robot-graph", "--graph-format", "mermaid", "--format", "json"},
+		},
+		{
+			name: "canonical graph command name",
+			args: []string{"robot-graph", "mermaid", "--json"},
 			want: []string{"--robot-graph", "--graph-format", "mermaid", "--format", "json"},
 		},
 		{
@@ -300,8 +330,28 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--robot-related", "bv-123", "--format", "json"},
 		},
 		{
+			name: "canonical value command name",
+			args: []string{"robot-related", "bv-123", "--json", "--limit=2"},
+			want: []string{"--robot-related", "bv-123", "--format", "json", "--related-max-results=2"},
+		},
+		{
+			name: "canonical diff command name",
+			args: []string{"robot-diff", "HEAD~1", "--json"},
+			want: []string{"--robot-diff", "--diff-since", "HEAD~1", "--format", "json"},
+		},
+		{
+			name: "canonical drift command name includes required check",
+			args: []string{"robot-drift", "--json"},
+			want: []string{"--check-drift", "--robot-drift", "--format", "json"},
+		},
+		{
 			name: "docs accepts output alias before topic",
 			args: []string{"docs", "--json", "guide"},
+			want: []string{"--robot-docs", "guide", "--format", "json"},
+		},
+		{
+			name: "canonical docs command name",
+			args: []string{"robot-docs", "guide", "--json"},
 			want: []string{"--robot-docs", "guide", "--format", "json"},
 		},
 	}
@@ -327,12 +377,18 @@ func TestAgentIntentAliasesOutputJSON(t *testing.T) {
 	exe := buildTestBinary(t)
 	for _, args := range [][]string{
 		{"--json"},
+		{"robot-help", "--json"},
+		{"robot-triage", "--json"},
 		{"triage", "--json"},
+		{"robot-capabilities", "--json"},
 		{"capabilities", "--json"},
+		{"robot-docs", "guide", "--json"},
 		{"docs", "guide", "--json"},
 		{"docs", "--json", "guide"},
+		{"robot-schema", "triage", "--json"},
 		{"schema", "triage", "--json"},
 		{"schema", "--json", "triage"},
+		{"robot-graph", "mermaid", "--json"},
 		{"graph", "--json", "mermaid"},
 		{"--name", "backend", "--json"},
 		{"--json=false"},

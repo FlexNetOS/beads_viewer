@@ -484,6 +484,9 @@ func rewriteAgentIntentCommand(args []string) ([]string, bool) {
 
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	rest := args[1:]
+	if rewritten, ok := rewriteCanonicalRobotCommandIntent(command, rest); ok {
+		return rewritten, true
+	}
 	switch command {
 	case "triage", "recommend", "recommendations":
 		return append([]string{"--robot-triage"}, rewriteAgentIntentFlagAliases(rest, "triage")...), true
@@ -549,6 +552,61 @@ func rewriteAgentIntentCommand(args []string) ([]string, bool) {
 		return append([]string{"--robot-capacity"}, rewriteAgentIntentFlagAliases(rest, "capacity")...), true
 	case "burndown":
 		return rewriteRobotValueIntent(rest, "burndown", "", "--robot-burndown", "current"), true
+	default:
+		return nil, false
+	}
+}
+
+func rewriteCanonicalRobotCommandIntent(command string, rest []string) ([]string, bool) {
+	switch command {
+	case "robot-help":
+		if containsAgentStructuredOutputAlias(rest) {
+			return rewriteRobotDocsIntent(append([]string{"guide"}, rest...)), true
+		}
+		return append([]string{"--robot-help"}, rewriteAgentIntentFlagAliases(rest, "help")...), true
+	case "robot-triage", "robot-triage-by-track", "robot-triage-by-label", "robot-next", "robot-plan", "robot-insights", "robot-priority", "robot-alerts", "robot-suggest", "robot-recipes", "robot-metrics", "robot-label-health", "robot-label-flow", "robot-label-attention", "robot-file-hotspots", "robot-sprint-list", "robot-capacity", "robot-capabilities", "robot-orphans", "robot-correlation-stats":
+		context := strings.TrimPrefix(command, "robot-")
+		return append([]string{"--" + command}, rewriteAgentIntentFlagAliases(rest, context)...), true
+	case "robot-docs":
+		return rewriteRobotDocsIntent(rest), true
+	case "robot-schema":
+		return rewriteRobotSchemaIntent(rest), true
+	case "robot-search":
+		return rewriteRobotSearchIntent(rest), true
+	case "robot-graph":
+		return rewriteRobotGraphIntent(rest), true
+	case "robot-diff":
+		return rewriteRobotValueIntent(rest, "diff", "--robot-diff", "--diff-since", ""), true
+	case "robot-history":
+		return rewriteRobotValueIntent(rest, "history", "--robot-history", "--bead-history", ""), true
+	case "robot-explain-correlation":
+		return rewriteRobotValueIntent(rest, "correlation", "", "--robot-explain-correlation", ""), true
+	case "robot-confirm-correlation":
+		return rewriteRobotValueIntent(rest, "correlation", "", "--robot-confirm-correlation", ""), true
+	case "robot-reject-correlation":
+		return rewriteRobotValueIntent(rest, "correlation", "", "--robot-reject-correlation", ""), true
+	case "robot-file-beads":
+		return rewriteRobotValueIntent(rest, "file-beads", "", "--robot-file-beads", ""), true
+	case "robot-file-relations":
+		return rewriteRobotValueIntent(rest, "file-relations", "", "--robot-file-relations", ""), true
+	case "robot-impact":
+		return rewriteRobotValueIntent(rest, "impact", "", "--robot-impact", ""), true
+	case "robot-related":
+		return rewriteRobotValueIntent(rest, "related", "", "--robot-related", ""), true
+	case "robot-blocker-chain":
+		return rewriteRobotValueIntent(rest, "blocker-chain", "", "--robot-blocker-chain", ""), true
+	case "robot-impact-network":
+		return rewriteRobotValueIntent(rest, "impact-network", "", "--robot-impact-network", "all"), true
+	case "robot-causality":
+		return rewriteRobotValueIntent(rest, "causality", "", "--robot-causality", ""), true
+	case "robot-sprint-show":
+		return rewriteRobotValueIntent(rest, "sprint-show", "", "--robot-sprint-show", ""), true
+	case "robot-forecast":
+		return rewriteRobotValueIntent(rest, "forecast", "", "--robot-forecast", "all"), true
+	case "robot-burndown":
+		return rewriteRobotValueIntent(rest, "burndown", "", "--robot-burndown", "current"), true
+	case "robot-drift":
+		return append([]string{"--check-drift", "--robot-drift"}, rewriteAgentIntentFlagAliases(rest, "drift")...), true
 	default:
 		return nil, false
 	}
@@ -7959,15 +8017,22 @@ func generateRobotCapabilities() map[string]interface{} {
 func agentIntentAliasDocs() []map[string]string {
 	return []map[string]string{
 		{"agent_instinct": "bv --json", "canonical": "bv --robot-triage --format json"},
+		{"agent_instinct": "bv robot-triage --json", "canonical": "bv --robot-triage --format json"},
 		{"agent_instinct": "bv triage --json", "canonical": "bv --robot-triage --format json"},
 		{"agent_instinct": "bv next --json", "canonical": "bv --robot-next --format json"},
 		{"agent_instinct": "bv plan --json", "canonical": "bv --robot-plan --format json"},
 		{"agent_instinct": "bv insights --json", "canonical": "bv --robot-insights --format json"},
+		{"agent_instinct": "bv robot-capabilities --json", "canonical": "bv --robot-capabilities --format json"},
 		{"agent_instinct": "bv capabilities --json", "canonical": "bv --robot-capabilities --format json"},
+		{"agent_instinct": "bv robot-docs guide --json", "canonical": "bv --robot-docs guide --format json"},
 		{"agent_instinct": "bv docs guide --json", "canonical": "bv --robot-docs guide --format json"},
+		{"agent_instinct": "bv robot-schema triage --json", "canonical": "bv --robot-schema --schema-command robot-triage --format json"},
 		{"agent_instinct": "bv schema triage --json", "canonical": "bv --robot-schema --schema-command robot-triage --format json"},
+		{"agent_instinct": "bv robot-search login oauth --json --limit 5", "canonical": "bv --search 'login oauth' --robot-search --format json --search-limit 5"},
 		{"agent_instinct": "bv search login oauth --json --limit 5", "canonical": "bv --search 'login oauth' --robot-search --format json --search-limit 5"},
+		{"agent_instinct": "bv robot-graph mermaid --json", "canonical": "bv --robot-graph --graph-format mermaid --format json"},
 		{"agent_instinct": "bv graph mermaid --json", "canonical": "bv --robot-graph --graph-format mermaid --format json"},
+		{"agent_instinct": "bv robot-related bv-123 --json", "canonical": "bv --robot-related bv-123 --format json"},
 		{"agent_instinct": "bv --name backend --json", "canonical": "bv --label backend --robot-triage --format json"},
 	}
 }
