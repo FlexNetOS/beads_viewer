@@ -209,25 +209,67 @@ func TestUnknownFlagErrorSuggestsNearestFlag(t *testing.T) {
 func TestUnknownCommandErrorSuggestsNearestCommand(t *testing.T) {
 	exe := buildTestBinary(t)
 
-	stdout, stderr, err := runCommandWithTimeout(t, t.TempDir(), exe, "robot-triag", "--json")
-	if err == nil {
-		t.Fatalf("expected unknown command to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "canonical robot command typo",
+			args: []string{"robot-triag", "--json"},
+			want: []string{
+				`unknown command "robot-triag" for "bv"`,
+				"Did you mean `bv robot-triage --json`?",
+				"Canonical flag form: `bv --robot-triage --format json`.",
+				"bv robot-capabilities --json",
+			},
+		},
+		{
+			name: "canonical value command typo preserves args",
+			args: []string{"robot-relatd", "A", "--json"},
+			want: []string{
+				`unknown command "robot-relatd" for "bv"`,
+				"Did you mean `bv robot-related A --json`?",
+				"Canonical flag form: `bv --robot-related A --format json`.",
+			},
+		},
+		{
+			name: "canonical value command typo quotes shell metacharacters",
+			args: []string{"robot-relatd", "A>B", "--json"},
+			want: []string{
+				`unknown command "robot-relatd" for "bv"`,
+				"Did you mean `bv robot-related 'A>B' --json`?",
+				"Canonical flag form: `bv --robot-related 'A>B' --format json`.",
+			},
+		},
+		{
+			name: "agent alias typo preserves args",
+			args: []string{"schem", "triage", "--json"},
+			want: []string{
+				`unknown command "schem" for "bv"`,
+				"Did you mean `bv schema triage --json`?",
+			},
+		},
 	}
-	if stdout != "" {
-		t.Fatalf("expected empty stdout for unknown command, got:\n%s", stdout)
-	}
-	for _, want := range []string{
-		`unknown command "robot-triag" for "bv"`,
-		"Did you mean `bv robot-triage --json`?",
-		"Canonical flag form: `bv --robot-triage --format json`.",
-		"bv robot-capabilities --json",
-	} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("stderr missing %q\nstderr:\n%s", want, stderr)
-		}
-	}
-	if strings.Count(stderr, `unknown command "robot-triag"`) != 1 {
-		t.Fatalf("expected unknown command error once, got:\n%s", stderr)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, err := runCommandWithTimeout(t, t.TempDir(), exe, tt.args...)
+			if err == nil {
+				t.Fatalf("expected unknown command to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("expected empty stdout for unknown command, got:\n%s", stdout)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(stderr, want) {
+					t.Fatalf("stderr missing %q\nstderr:\n%s", want, stderr)
+				}
+			}
+			if strings.Count(stderr, `unknown command "`) != 1 {
+				t.Fatalf("expected unknown command error once, got:\n%s", stderr)
+			}
+		})
 	}
 }
 

@@ -1006,7 +1006,7 @@ func stabilizeRobotTriageForPinnedClock(triage *analysis.TriageResult) {
 	}
 }
 
-func enrichCommandParseError(err error) error {
+func enrichCommandParseError(err error, args []string) error {
 	if err == nil {
 		return nil
 	}
@@ -1016,15 +1016,55 @@ func enrichCommandParseError(err error) error {
 		return err
 	}
 
-	suggestion := suggestClosest(name, agentIntentCommandNames())
+	lookupName, tail := splitUnknownCommandIntent(name, args)
+	suggestion := suggestClosest(lookupName, agentIntentCommandNames())
 	if suggestion == "" {
 		return err
 	}
 
+	suggestedCommand := joinCommandWords(append([]string{"bv", suggestion}, tail...))
 	if strings.HasPrefix(suggestion, "robot-") {
-		return fmt.Errorf("%w\nDid you mean `bv %s --json`?\nCanonical flag form: `bv --%s --format json`.\nRun `bv robot-capabilities --json` for the machine-readable command inventory.", err, suggestion, suggestion)
+		canonicalTail := rewriteAgentIntentFlagAliases(tail, strings.TrimPrefix(suggestion, "robot-"))
+		canonicalCommand := joinCommandWords(append([]string{"bv", "--" + suggestion}, canonicalTail...))
+		return fmt.Errorf("%w\nDid you mean `%s`?\nCanonical flag form: `%s`.\nRun `bv robot-capabilities --json` for the machine-readable command inventory.", err, suggestedCommand, canonicalCommand)
 	}
-	return fmt.Errorf("%w\nDid you mean `bv %s --json`?\nRun `bv robot-capabilities --json` for the machine-readable command inventory.", err, suggestion)
+	return fmt.Errorf("%w\nDid you mean `%s`?\nRun `bv robot-capabilities --json` for the machine-readable command inventory.", err, suggestedCommand)
+}
+
+func splitUnknownCommandIntent(name string, args []string) (string, []string) {
+	fields := strings.Fields(name)
+	if len(fields) == 0 {
+		return name, nil
+	}
+
+	lookupName := fields[0]
+	tail := append([]string{}, fields[1:]...)
+	if len(args) > 0 {
+		if args[0] == name || args[0] == lookupName {
+			tail = append(tail, args[1:]...)
+		}
+	}
+	return lookupName, tail
+}
+
+func joinCommandWords(words []string) string {
+	quoted := make([]string, 0, len(words))
+	for _, word := range words {
+		quoted = append(quoted, shellQuoteWord(word))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuoteWord(word string) string {
+	if word == "" {
+		return "''"
+	}
+	if strings.IndexFunc(word, func(r rune) bool {
+		return !(r == '-' || r == '_' || r == '=' || r == '/' || r == '.' || r == ':' || r == ',' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z'))
+	}) < 0 {
+		return word
+	}
+	return "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
 }
 
 func enrichFlagParseError(err error, flags *flag.FlagSet) error {
@@ -5190,11 +5230,12 @@ func main() {
 
 		return nil
 	})
-	normalizedArgs := rewriteAgentIntentArgs(os.Args[1:])
+	originalArgs := append([]string{}, os.Args[1:]...)
+	normalizedArgs := rewriteAgentIntentArgs(originalArgs)
 	rootCmd.SetArgs(rewriteSingleDashLongFlags(normalizedArgs, rootCmd.Flags()))
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, enrichCommandParseError(err))
+		fmt.Fprintln(os.Stderr, enrichCommandParseError(err, originalArgs))
 		os.Exit(1)
 	}
 }
