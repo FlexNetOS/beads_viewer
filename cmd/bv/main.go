@@ -8278,7 +8278,7 @@ func acceptedRobotInvocations(commandName string, doc robotCommandDoc) []string 
 		return invocations
 	}
 	return []string{
-		"bv " + doc.Flag + " --format json",
+		"bv " + robotFlagExampleForm(doc.Flag) + " --format json",
 		preferredRobotInvocation(commandName, doc),
 	}
 }
@@ -8306,11 +8306,11 @@ func preferredRobotInvocationOverride(commandName string) string {
 	case "robot-file-relations":
 		return "bv robot-file-relations README.md --json"
 	case "robot-related":
-		return "bv robot-related <id> --json"
+		return "bv robot-related ISSUE_ID --json"
 	case "robot-blocker-chain":
-		return "bv robot-blocker-chain <id> --json"
+		return "bv robot-blocker-chain ISSUE_ID --json"
 	case "robot-causality":
-		return "bv robot-causality <id> --json"
+		return "bv robot-causality ISSUE_ID --json"
 	case "robot-forecast":
 		return "bv robot-forecast all --json"
 	case "robot-burndown":
@@ -8348,11 +8348,31 @@ func acceptedRobotInvocationOverrides(commandName string) []string {
 }
 
 func robotCommandArgumentSuffix(doc robotCommandDoc) string {
-	parts := strings.Fields(doc.Flag)
+	parts := strings.Fields(robotFlagExampleForm(doc.Flag))
 	if len(parts) <= 1 {
 		return ""
 	}
 	return " " + strings.Join(parts[1:], " ")
+}
+
+func robotFlagExampleForm(flag string) string {
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"[<id>|all]", "all"},
+		{"<path[,path...]>", "README.md"},
+		{"<sprint|current>", "current"},
+		{"<id|all>", "all"},
+		{"<topic>", "guide"},
+		{"<cmd>", "robot-triage"},
+		{"<path>", "README.md"},
+		{"<id>", "ISSUE_ID"},
+	}
+	for _, replacement := range replacements {
+		flag = strings.ReplaceAll(flag, replacement.old, replacement.new)
+	}
+	return flag
 }
 
 func agentIntentAliasDocs() []map[string]string {

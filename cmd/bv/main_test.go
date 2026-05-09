@@ -538,11 +538,24 @@ func TestRobotCapabilitiesManifest(t *testing.T) {
 	}
 	requireString(t, seen["robot-triage"]["preferred_invocation"].(string), "bv robot-triage --json")
 	requireContainsString(t, seen["robot-triage"]["accepted_invocations"].([]string), "bv --robot-triage --format json")
-	requireContainsString(t, seen["robot-related"]["accepted_invocations"].([]string), "bv robot-related <id> --json")
+	requireContainsString(t, seen["robot-related"]["accepted_invocations"].([]string), "bv robot-related ISSUE_ID --json")
 	requireString(t, seen["robot-search"]["preferred_invocation"].(string), `bv robot-search "login oauth" --json`)
 	requireContainsString(t, seen["robot-search"]["accepted_invocations"].([]string), `bv --search "login oauth" --robot-search --format json`)
 	requireString(t, seen["robot-diff"]["preferred_invocation"].(string), "bv robot-diff HEAD~1 --json")
 	requireContainsString(t, seen["robot-diff"]["accepted_invocations"].([]string), "bv --robot-diff --diff-since HEAD~1 --format json")
+	for _, command := range commands {
+		for _, key := range []string{"preferred_invocation"} {
+			value, _ := command[key].(string)
+			if strings.ContainsAny(value, "<>") {
+				t.Fatalf("%s for %s contains shell redirection placeholder: %q", key, command["name"], value)
+			}
+		}
+		for _, value := range command["accepted_invocations"].([]string) {
+			if strings.ContainsAny(value, "<>") {
+				t.Fatalf("accepted invocation for %s contains shell redirection placeholder: %q", command["name"], value)
+			}
+		}
+	}
 	if _, ok := capabilities["environment_variables"].(map[string]string); !ok {
 		t.Fatalf("environment_variables has unexpected type %T", capabilities["environment_variables"])
 	}
