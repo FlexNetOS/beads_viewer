@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -180,12 +181,7 @@ var rootHelpSections = []flagHelpSection{
 }
 
 func isOneOf(name string, values ...string) bool {
-	for _, value := range values {
-		if name == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, name)
 }
 
 func hasAnyPrefix(name string, prefixes ...string) bool {
@@ -1052,12 +1048,22 @@ func isPositionalValue(arg string) bool {
 
 func isRobotOutputFormat(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
-	return value == "json" || value == "toon"
+	switch value {
+	case "json", "toon":
+		return true
+	default:
+		return false
+	}
 }
 
 func isGraphFormat(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
-	return value == "json" || value == "dot" || value == "mermaid"
+	switch value {
+	case "json", "dot", "mermaid":
+		return true
+	default:
+		return false
+	}
 }
 
 func robotNow() time.Time {
@@ -1148,7 +1154,7 @@ func shellQuoteWord(word string) string {
 func enrichFlagParseError(err error, flags *flag.FlagSet, args []string) error {
 	if err != nil {
 		if name, ok := missingFlagArgumentName(err.Error()); ok {
-			return fmt.Errorf("%w\nUse --%s <value>. Run `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, name)
+			return fmt.Errorf("%w\nUse --%s VALUE. Run `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, name)
 		}
 
 		name, ok := unknownLongFlagName(err.Error())
@@ -8241,7 +8247,7 @@ func generateRobotCapabilities() map[string]interface{} {
 			entry["key_fields"] = doc.KeyFields
 		}
 		if len(doc.Params) > 0 {
-			entry["params"] = doc.Params
+			entry["params"] = robotExampleForms(doc.Params)
 		}
 		commands = append(commands, entry)
 	}
@@ -8355,6 +8361,14 @@ func robotCommandArgumentSuffix(doc robotCommandDoc) string {
 	return " " + strings.Join(parts[1:], " ")
 }
 
+func robotExampleForms(values []string) []string {
+	examples := make([]string, 0, len(values))
+	for _, value := range values {
+		examples = append(examples, robotFlagExampleForm(value))
+	}
+	return examples
+}
+
 func robotFlagExampleForm(flag string) string {
 	replacements := []struct {
 		old string
@@ -8364,10 +8378,16 @@ func robotFlagExampleForm(flag string) string {
 		{"<path[,path...]>", "README.md"},
 		{"<sprint|current>", "current"},
 		{"<id|all>", "all"},
+		{"<query>", `"login oauth"`},
 		{"<topic>", "guide"},
 		{"<cmd>", "robot-triage"},
+		{"<date>", `"30 days ago"`},
+		{"<label>", "backend"},
 		{"<path>", "README.md"},
+		{"<type>", "critical"},
+		{"<ref>", "HEAD~1"},
 		{"<id>", "ISSUE_ID"},
+		{"<n>", "10"},
 	}
 	for _, replacement := range replacements {
 		flag = strings.ReplaceAll(flag, replacement.old, replacement.new)

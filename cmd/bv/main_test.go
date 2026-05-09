@@ -311,7 +311,7 @@ func TestMissingFlagArgumentErrorSuggestsValueShape(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("expected empty stdout for missing flag argument, got:\n%s", stdout)
 	}
-	for _, want := range []string{"flag needs an argument: --label", "Use --label <value>."} {
+	for _, want := range []string{"flag needs an argument: --label", "Use --label VALUE."} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q\nstderr:\n%s", want, stderr)
 		}
@@ -553,6 +553,13 @@ func TestRobotCapabilitiesManifest(t *testing.T) {
 		for _, value := range command["accepted_invocations"].([]string) {
 			if strings.ContainsAny(value, "<>") {
 				t.Fatalf("accepted invocation for %s contains shell redirection placeholder: %q", command["name"], value)
+			}
+		}
+		if params, ok := command["params"].([]string); ok {
+			for _, value := range params {
+				if strings.ContainsAny(value, "<>") {
+					t.Fatalf("param for %s contains shell redirection placeholder: %q", command["name"], value)
+				}
 			}
 		}
 	}
