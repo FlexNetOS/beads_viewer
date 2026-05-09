@@ -511,7 +511,7 @@ func newRootCommand(run func() error) *cobra.Command {
 		printRootHelp(cmd)
 	})
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return enrichFlagParseError(err, cmd.Flags())
+		return enrichFlagParseError(err, cmd.Flags(), nil)
 	})
 
 	return cmd
@@ -1145,10 +1145,10 @@ func shellQuoteWord(word string) string {
 	return "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
 }
 
-func enrichFlagParseError(err error, flags *flag.FlagSet) error {
+func enrichFlagParseError(err error, flags *flag.FlagSet, args []string) error {
 	if err != nil {
 		if name, ok := missingFlagArgumentName(err.Error()); ok {
-			return fmt.Errorf("%s\nUse --%s <value>. Run `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, name)
+			return fmt.Errorf("%w\nUse --%s <value>. Run `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, name)
 		}
 
 		name, ok := unknownLongFlagName(err.Error())
@@ -1163,13 +1163,44 @@ func enrichFlagParseError(err error, flags *flag.FlagSet) error {
 			}
 		})
 		if suggestion := suggestClosest(name, candidates); suggestion != "" {
-			return fmt.Errorf("%s\nDid you mean --%s?\nRun `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, suggestion)
+			correctedCommand := correctedUnknownFlagCommand(args, name, suggestion)
+			if correctedCommand == "" {
+				return fmt.Errorf("%w\nDid you mean --%s?\nRun `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, suggestion)
+			}
+			return fmt.Errorf("%w\nDid you mean `%s`?\nRun `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, correctedCommand)
 		}
 
 		return err
 	}
 
 	return nil
+}
+
+func correctedUnknownFlagCommand(args []string, unknown, suggestion string) string {
+	if suggestion == "" {
+		return ""
+	}
+
+	target := "--" + unknown
+	replacement := "--" + suggestion
+	correctedArgs := make([]string, 0, len(args)+1)
+	replaced := false
+	for _, arg := range args {
+		switch {
+		case arg == target:
+			correctedArgs = append(correctedArgs, replacement)
+			replaced = true
+		case strings.HasPrefix(arg, target+"="):
+			correctedArgs = append(correctedArgs, replacement+strings.TrimPrefix(arg, target))
+			replaced = true
+		default:
+			correctedArgs = append(correctedArgs, arg)
+		}
+	}
+	if !replaced {
+		correctedArgs = append(correctedArgs, replacement)
+	}
+	return joinCommandWords(append([]string{"bv"}, correctedArgs...))
 }
 
 func unknownCommandName(message string) (string, bool) {
@@ -5309,6 +5340,9 @@ func main() {
 		return nil
 	})
 	originalArgs := append([]string{}, os.Args[1:]...)
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return enrichFlagParseError(err, cmd.Flags(), originalArgs)
+	})
 	normalizedArgs := rewriteAgentIntentArgs(originalArgs)
 	rootCmd.SetArgs(rewriteSingleDashLongFlags(normalizedArgs, rootCmd.Flags()))
 

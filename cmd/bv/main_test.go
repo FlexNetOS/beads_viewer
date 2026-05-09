@@ -189,20 +189,48 @@ func TestCLIFlagCompatibility(t *testing.T) {
 func TestUnknownFlagErrorSuggestsNearestFlag(t *testing.T) {
 	exe := buildTestBinary(t)
 
-	stdout, stderr, err := runCommandWithTimeout(t, t.TempDir(), exe, "--robot-triag")
-	if err == nil {
-		t.Fatalf("expected unknown flag to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "robot flag typo",
+			args: []string{"--robot-triag", "--json"},
+			want: []string{
+				"unknown flag: --robot-triag",
+				"Did you mean `bv --robot-triage --json`?",
+				"bv --robot-help",
+			},
+		},
+		{
+			name: "value flag typo preserves and quotes value",
+			args: []string{"--robot-graph", "--graph-rooot=A>B"},
+			want: []string{
+				"unknown flag: --graph-rooot",
+				"Did you mean `bv --robot-graph '--graph-root=A>B'`?",
+			},
+		},
 	}
-	if stdout != "" {
-		t.Fatalf("expected empty stdout for unknown flag, got:\n%s", stdout)
-	}
-	for _, want := range []string{"unknown flag: --robot-triag", "Did you mean --robot-triage?"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("stderr missing %q\nstderr:\n%s", want, stderr)
-		}
-	}
-	if strings.Count(stderr, "unknown flag: --robot-triag") != 1 {
-		t.Fatalf("expected unknown flag error once, got:\n%s", stderr)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, err := runCommandWithTimeout(t, t.TempDir(), exe, tt.args...)
+			if err == nil {
+				t.Fatalf("expected unknown flag to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("expected empty stdout for unknown flag, got:\n%s", stdout)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(stderr, want) {
+					t.Fatalf("stderr missing %q\nstderr:\n%s", want, stderr)
+				}
+			}
+			if strings.Count(stderr, "unknown flag: --") != 1 {
+				t.Fatalf("expected unknown flag error once, got:\n%s", stderr)
+			}
+		})
 	}
 }
 
