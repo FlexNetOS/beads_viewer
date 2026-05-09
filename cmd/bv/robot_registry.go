@@ -93,14 +93,15 @@ func (e *robotHandlerExitError) Unwrap() error {
 }
 
 type phaseOneRobotHandlerConfig struct {
-	RobotHelpFlag    *bool
-	RobotSchemaFlag  *bool
-	RobotRecipesFlag *bool
-	RobotMetricsFlag *bool
-	RobotDocsFlag    *string
-	VersionFlag      *bool
-	SchemaCommand    *string
-	RecipeLoader     func() *recipe.Loader
+	RobotHelpFlag         *bool
+	RobotCapabilitiesFlag *bool
+	RobotSchemaFlag       *bool
+	RobotRecipesFlag      *bool
+	RobotMetricsFlag      *bool
+	RobotDocsFlag         *string
+	VersionFlag           *bool
+	SchemaCommand         *string
+	RecipeLoader          func() *recipe.Loader
 }
 
 type phaseTwoRobotHandlerConfig struct {
@@ -382,6 +383,8 @@ Core commands:
   --robot-next      Single top recommendation
   --robot-plan      Dependency-respecting execution tracks
   --robot-insights  Graph metrics and structural analysis
+  --robot-capabilities  Machine-readable command/contract manifest
+  --robot-schema    JSON Schema definitions for robot outputs
 
 `)
 	if err != nil {
@@ -458,6 +461,18 @@ func registerPhaseOneRobotHandlers(registry *RobotRegistry, cfg phaseOneRobotHan
 		},
 	})
 	registry.Register(RobotCommand{
+		Name:        "robot-capabilities",
+		FlagName:    "robot-capabilities",
+		FlagPtr:     cfg.RobotCapabilitiesFlag,
+		Description: "Output machine-readable command capabilities",
+		Handler: func(ctx RobotContext) error {
+			if err := ctx.EncoderOrDefault().Encode(generateRobotCapabilities()); err != nil {
+				return fmt.Errorf("encoding robot capabilities: %w", err)
+			}
+			return nil
+		},
+	})
+	registry.Register(RobotCommand{
 		Name:        "robot-recipes",
 		FlagName:    "robot-recipes",
 		FlagPtr:     cfg.RobotRecipesFlag,
@@ -512,12 +527,15 @@ func registerPhaseOneRobotHandlers(registry *RobotRegistry, cfg phaseOneRobotHan
 				}
 
 				fmt.Fprintf(ctx.StderrOrDefault(), "Unknown command: %s\n", commandName)
-				fmt.Fprintln(ctx.StderrOrDefault(), "Available commands:")
 				commandNames := make([]string, 0, len(schemas.Commands))
 				for name := range schemas.Commands {
 					commandNames = append(commandNames, name)
 				}
 				sort.Strings(commandNames)
+				if suggestion := suggestClosest(commandName, commandNames); suggestion != "" {
+					fmt.Fprintf(ctx.StderrOrDefault(), "Did you mean: %s\n", suggestion)
+				}
+				fmt.Fprintln(ctx.StderrOrDefault(), "Available commands:")
 				for _, name := range commandNames {
 					fmt.Fprintf(ctx.StderrOrDefault(), "  %s\n", name)
 				}

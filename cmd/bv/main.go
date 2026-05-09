@@ -250,7 +250,7 @@ func validateEnumFlags(flags *flag.FlagSet, rules []enumFlagRule) error {
 			}
 		}
 		if !valid {
-			return fmt.Errorf("invalid --%s %q (expected one of %s)", rule.name, value, joinAllowedValues(rule.allowed))
+			return fmt.Errorf("invalid --%s %q (expected one of %s)%s", rule.name, value, joinAllowedValues(rule.allowed), formatDidYouMean(normalized, rule.allowed))
 		}
 	}
 
@@ -286,6 +286,86 @@ func activePrimaryFlags(flags *flag.FlagSet, names []string) []string {
 
 func joinAllowedValues(values []string) string {
 	return strings.Join(values, ", ")
+}
+
+func formatDidYouMean(value string, allowed []string) string {
+	if suggestion := suggestClosest(value, allowed); suggestion != "" {
+		return fmt.Sprintf("; did you mean %q?", suggestion)
+	}
+	return ""
+}
+
+func suggestClosest(value string, allowed []string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || len(allowed) == 0 {
+		return ""
+	}
+
+	best := ""
+	bestDist := maxSuggestionDistance(value)
+	for _, candidate := range allowed {
+		normalized := strings.ToLower(strings.TrimSpace(candidate))
+		if normalized == "" {
+			continue
+		}
+		dist := levenshteinDistance(value, normalized)
+		if dist <= bestDist && (best == "" || dist < bestDist || normalized < strings.ToLower(best)) {
+			best = candidate
+			bestDist = dist
+		}
+	}
+	return best
+}
+
+func maxSuggestionDistance(value string) int {
+	switch n := len(value); {
+	case n <= 4:
+		return 2
+	case n <= 10:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func levenshteinDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if a == "" {
+		return len(b)
+	}
+	if b == "" {
+		return len(a)
+	}
+
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			cur[j] = minInt(cur[j-1]+1, prev[j]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
+
+func minInt(first int, rest ...int) int {
+	min := first
+	for _, v := range rest {
+		if v < min {
+			min = v
+		}
+	}
+	return min
 }
 
 func hasActiveRequiredFlag(flags *flag.FlagSet, names ...string) bool {
@@ -335,6 +415,7 @@ func newRootCommand(run func() error) *cobra.Command {
 		Use:                   "bv",
 		Short:                 "A TUI viewer for beads issue tracker.",
 		Args:                  cobra.NoArgs,
+		SilenceErrors:         true,
 		SilenceUsage:          true,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -350,6 +431,9 @@ func newRootCommand(run func() error) *cobra.Command {
 	})
 	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		printRootHelp(cmd)
+	})
+	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return enrichFlagParseError(err, cmd.Flags())
 	})
 
 	return cmd
@@ -375,6 +459,51 @@ func rewriteSingleDashLongFlags(args []string, flags *flag.FlagSet) []string {
 		rewritten = append(rewritten, "-"+arg)
 	}
 	return rewritten
+}
+
+func enrichFlagParseError(err error, flags *flag.FlagSet) error {
+	if err != nil {
+		name, ok := unknownLongFlagName(err.Error())
+		if !ok {
+			return err
+		}
+
+		var candidates []string
+		flags.VisitAll(func(f *flag.Flag) {
+			if !f.Hidden {
+				candidates = append(candidates, f.Name)
+			}
+		})
+		if suggestion := suggestClosest(name, candidates); suggestion != "" {
+			return fmt.Errorf("%s\nDid you mean --%s?\nRun `bv --help` for all flags or `bv --robot-help` for agent-focused docs.", err, suggestion)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+func unknownLongFlagName(message string) (string, bool) {
+	const prefix = "unknown flag: --"
+	idx := strings.Index(message, prefix)
+	if idx < 0 {
+		return "", false
+	}
+
+	rest := message[idx+len(prefix):]
+	end := len(rest)
+	for i, r := range rest {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			end = i
+			break
+		}
+	}
+	name := strings.TrimSpace(rest[:end])
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 func printRootHelp(cmd *cobra.Command) {
@@ -449,6 +578,7 @@ func main() {
 	yesFlag := flag.Bool("yes", false, "Skip confirmation prompts (use with --update)")
 	exportFile := flag.String("export-md", "", "Export issues to a Markdown file (e.g., report.md)")
 	robotHelp := flag.Bool("robot-help", false, "Show AI agent help")
+	robotCapabilities := flag.Bool("robot-capabilities", false, "Output machine-readable command capabilities for AI agents")
 	robotDocs := flag.String("robot-docs", "", "Machine-readable JSON docs for AI agents. Topics: guide, commands, examples, env, exit-codes, all")
 	outputFormat := flag.StringP("format", "f", "", "Structured output format for --robot-* commands: json or toon (env: BV_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT)")
 	toonStats := flag.Bool("stats", false, "Show JSON vs TOON token estimates on stderr (env: TOON_STATS=1)")
@@ -609,13 +739,14 @@ func main() {
 	var recipeLoader *recipe.Loader
 	phaseOneRobotRegistry := newRobotRegistry()
 	registerPhaseOneRobotHandlers(&phaseOneRobotRegistry, phaseOneRobotHandlerConfig{
-		RobotHelpFlag:    robotHelp,
-		RobotSchemaFlag:  robotSchema,
-		RobotRecipesFlag: robotRecipes,
-		RobotMetricsFlag: robotMetrics,
-		RobotDocsFlag:    robotDocs,
-		VersionFlag:      versionFlag,
-		SchemaCommand:    schemaCommand,
+		RobotHelpFlag:         robotHelp,
+		RobotCapabilitiesFlag: robotCapabilities,
+		RobotSchemaFlag:       robotSchema,
+		RobotRecipesFlag:      robotRecipes,
+		RobotMetricsFlag:      robotMetrics,
+		RobotDocsFlag:         robotDocs,
+		VersionFlag:           versionFlag,
+		SchemaCommand:         schemaCommand,
 		RecipeLoader: func() *recipe.Loader {
 			return recipeLoader
 		},
@@ -755,6 +886,7 @@ func main() {
 		}
 		primaryRobotCommandGroups := []primaryCommandGroup{
 			{flags: []string{"robot-help"}},
+			{flags: []string{"robot-capabilities"}},
 			{flags: []string{"robot-docs"}},
 			{flags: []string{"robot-insights"}},
 			{flags: []string{"robot-plan"}},
@@ -779,7 +911,7 @@ func main() {
 			{flags: []string{"robot-correlation-stats"}},
 			{flags: []string{"robot-orphans"}},
 			{flags: []string{"robot-file-beads"}},
-			{flags: []string{"file-hotspots"}},
+			{flags: []string{"robot-file-hotspots"}},
 			{flags: []string{"robot-impact"}},
 			{flags: []string{"robot-file-relations"}},
 			{flags: []string{"robot-related"}},
@@ -901,6 +1033,7 @@ func main() {
 			*robotForecast != "" ||
 			*robotBurndown != "" ||
 			*robotCapacity ||
+			*robotCapabilities ||
 			*robotDocs != "" ||
 			// When stdout is non-TTY, --diff-since auto-enables JSON output. Mark this
 			// as robot mode early so parsers keep stdout JSON clean.
@@ -928,6 +1061,7 @@ func main() {
 		}
 		dispatchRobotFlagOrExit(&phaseOneRobotRegistry, "robot-help", robotDispatchContext)
 		dispatchRobotFlagOrExit(&phaseOneRobotRegistry, "version", robotDispatchContext)
+		dispatchRobotFlagOrExit(&phaseOneRobotRegistry, "robot-capabilities", robotDispatchContext)
 
 		// Handle --check-update (bv-182)
 		if *checkUpdateFlag {
@@ -6206,28 +6340,27 @@ func discoverBeadsDirs(root string, maxDepth int) []string {
 	}
 
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !d.IsDir() {
-			return nil
-		}
+		if err == nil {
+			if !d.IsDir() {
+				return nil
+			}
 
-		name := d.Name()
-		if skip[name] && path != root {
-			return fs.SkipDir
-		}
-
-		rel := strings.TrimPrefix(strings.TrimPrefix(path, root), sep)
-		if rel != "" {
-			if depth := len(strings.Split(rel, sep)); depth > maxDepth {
+			name := d.Name()
+			if skip[name] && path != root {
 				return fs.SkipDir
 			}
-		}
 
-		if name == ".beads" {
-			dirs = append(dirs, path)
-			return fs.SkipDir
+			rel := strings.TrimPrefix(strings.TrimPrefix(path, root), sep)
+			if rel != "" {
+				if depth := len(strings.Split(rel, sep)); depth > maxDepth {
+					return fs.SkipDir
+				}
+			}
+
+			if name == ".beads" {
+				dirs = append(dirs, path)
+				return fs.SkipDir
+			}
 		}
 		return nil
 	})
@@ -6972,6 +7105,8 @@ var robotOutputFormat = "json"
 var robotToonEncodeOptions = toon.DefaultEncodeOptions()
 var robotShowToonStats bool
 
+const robotContractVersion = "1.0.0"
+
 // RobotEnvelope is the standard envelope for all robot command outputs.
 // All robot outputs MUST include these fields for consistency.
 type RobotEnvelope struct {
@@ -7105,43 +7240,44 @@ func estimateTokens(s string) int {
 	return (len(trimmed) + 3) / 4
 }
 
-// generateRobotDocs returns machine-readable documentation for AI agents (bd-2v50).
-// Topics: guide, commands, examples, env, exit-codes, all.
-func generateRobotDocs(topic string) map[string]interface{} {
-	now := time.Now().UTC().Format(time.RFC3339)
-	result := map[string]interface{}{
-		"generated_at":  now,
-		"output_format": robotOutputFormat,
-		"version":       version.Version,
-		"topic":         topic,
-	}
+type robotCommandDoc struct {
+	Flag        string   `json:"flag"`
+	Description string   `json:"description"`
+	KeyFields   []string `json:"key_fields,omitempty"`
+	Params      []string `json:"params,omitempty"`
+	NeedsIssues bool     `json:"needs_issues"`
+}
 
-	guide := map[string]interface{}{
-		"description": "bv (Beads Viewer) provides structural analysis of the beads issue tracker DAG. It is the primary interface for AI agents to understand project state, plan work, and discover high-impact tasks.",
-		"quickstart": []string{
-			"bv --robot-triage               # Full triage with recommendations",
-			"bv --robot-next                  # Single top pick for immediate work",
-			"bv --robot-plan                  # Dependency-respecting execution plan",
-			"bv --robot-insights              # Deep graph analysis (PageRank, betweenness, etc.)",
-			"bv --robot-triage-by-track       # Parallel work streams for multi-agent coordination",
-			"bv --robot-schema                # JSON Schema definitions for all commands",
-		},
-		"data_source": ".beads/issues.jsonl and git history (correlations)",
-		"output_modes": map[string]string{
-			"json": "Default structured output",
-			"toon": "Token-optimized notation (saves ~30-50% tokens)",
-		},
-	}
+func robotDocsTopics() []string {
+	return []string{"guide", "commands", "examples", "env", "exit-codes", "all"}
+}
 
-	type cmdDoc struct {
-		Flag        string   `json:"flag"`
-		Description string   `json:"description"`
-		KeyFields   []string `json:"key_fields,omitempty"`
-		Params      []string `json:"params,omitempty"`
-		NeedsIssues bool     `json:"needs_issues"`
+func robotEnvVars() map[string]string {
+	return map[string]string{
+		"BEADS_DB":            "Path to beads database file or .beads directory (overrides BEADS_DIR; overridden by --db flag)",
+		"BEADS_DIR":           "Path to .beads directory (fallback when BEADS_DB and --db are not set)",
+		"BV_OUTPUT_FORMAT":    "Default output format: json or toon (overridden by --format)",
+		"TOON_DEFAULT_FORMAT": "Fallback format if BV_OUTPUT_FORMAT not set",
+		"TOON_STATS":          "Set to 1 to show JSON vs TOON token estimates on stderr",
+		"TOON_KEY_FOLDING":    "TOON key folding mode",
+		"TOON_INDENT":         "TOON indentation level (0-16)",
+		"BV_PRETTY_JSON":      "Set to 1 for indented JSON output",
+		"BV_ROBOT":            "Set to 1 to force robot mode (clean stdout)",
+		"BV_SEARCH_MODE":      "Search mode: text or hybrid",
+		"BV_SEARCH_PRESET":    "Hybrid search preset name",
 	}
+}
 
-	commands := map[string]cmdDoc{
+func robotExitCodes() map[string]string {
+	return map[string]string{
+		"0": "Success",
+		"1": "Error (general failure, drift critical)",
+		"2": "Invalid arguments or drift warning",
+	}
+}
+
+func robotCommandDocs() map[string]robotCommandDoc {
+	return map[string]robotCommandDoc{
 		"robot-triage": {
 			Flag: "--robot-triage", Description: "Unified triage: top picks, recommendations, quick wins, blockers, project health, velocity.",
 			KeyFields:   []string{"triage.quick_ref.top_picks", "triage.recommendations", "triage.quick_wins", "triage.blockers_to_clear", "triage.project_health"},
@@ -7193,6 +7329,12 @@ func generateRobotDocs(topic string) map[string]interface{} {
 			Params:      []string{"--suggest-type duplicate|dependency|label|cycle", "--suggest-confidence 0.0-1.0", "--suggest-bead <id>"},
 			NeedsIssues: true,
 		},
+		"robot-capabilities": {
+			Flag:        "--robot-capabilities",
+			Description: "Machine-readable capability manifest: version, contract, commands, env vars, exit codes, and output formats.",
+			KeyFields:   []string{"tool", "version", "contract_version", "commands", "environment_variables", "exit_codes"},
+			NeedsIssues: false,
+		},
 		"robot-schema": {
 			Flag: "--robot-schema", Description: "JSON Schema definitions for all robot command outputs.",
 			KeyFields:   []string{"schema_version", "envelope", "commands"},
@@ -7220,15 +7362,18 @@ func generateRobotDocs(topic string) map[string]interface{} {
 			NeedsIssues: true,
 		},
 		"robot-label-health": {
-			Flag: "--robot-label-health", Description: "Per-label health metrics: open/closed counts, velocity, staleness.",
+			Flag:        "--robot-label-health",
+			Description: "Per-label health metrics: open/closed counts, velocity, staleness.",
 			NeedsIssues: true,
 		},
 		"robot-label-flow": {
-			Flag: "--robot-label-flow", Description: "Cross-label dependency flow analysis.",
+			Flag:        "--robot-label-flow",
+			Description: "Cross-label dependency flow analysis.",
 			NeedsIssues: true,
 		},
 		"robot-label-attention": {
-			Flag: "--robot-label-attention", Description: "Attention-ranked labels requiring focus.",
+			Flag:        "--robot-label-attention",
+			Description: "Attention-ranked labels requiring focus.",
 			Params:      []string{"--attention-limit <n>"},
 			NeedsIssues: true,
 		},
@@ -7238,7 +7383,8 @@ func generateRobotDocs(topic string) map[string]interface{} {
 			NeedsIssues: true,
 		},
 		"robot-metrics": {
-			Flag: "--robot-metrics", Description: "Performance metrics: timing, cache hit rates, memory usage.",
+			Flag:        "--robot-metrics",
+			Description: "Performance metrics: timing, cache hit rates, memory usage.",
 			NeedsIssues: true,
 		},
 		"robot-orphans": {
@@ -7263,11 +7409,12 @@ func generateRobotDocs(topic string) map[string]interface{} {
 		},
 		"robot-related": {
 			Flag: "--robot-related <id>", Description: "Beads related to a specific bead ID.",
-			Params:      []string{"--related-min-relevance 0-100", "--related-max-results <n>", "--related-include-closed"},
+			Params:      []string{"--related-min-relevance 0-100 or 0.0-1.0", "--related-max-results <n>", "--related-include-closed"},
 			NeedsIssues: true,
 		},
 		"robot-blocker-chain": {
-			Flag: "--robot-blocker-chain <id>", Description: "Full blocker chain analysis for an issue.",
+			Flag:        "--robot-blocker-chain <id>",
+			Description: "Full blocker chain analysis for an issue.",
 			NeedsIssues: true,
 		},
 		"robot-impact-network": {
@@ -7276,15 +7423,18 @@ func generateRobotDocs(topic string) map[string]interface{} {
 			NeedsIssues: true,
 		},
 		"robot-causality": {
-			Flag: "--robot-causality <id>", Description: "Causal chain analysis for a bead.",
+			Flag:        "--robot-causality <id>",
+			Description: "Causal chain analysis for a bead.",
 			NeedsIssues: true,
 		},
 		"robot-sprint-list": {
-			Flag: "--robot-sprint-list", Description: "List all sprints as JSON.",
+			Flag:        "--robot-sprint-list",
+			Description: "List all sprints as JSON.",
 			NeedsIssues: true,
 		},
 		"robot-sprint-show": {
-			Flag: "--robot-sprint-show <id>", Description: "Show details for a specific sprint.",
+			Flag:        "--robot-sprint-show <id>",
+			Description: "Show details for a specific sprint.",
 			NeedsIssues: true,
 		},
 		"robot-forecast": {
@@ -7298,14 +7448,98 @@ func generateRobotDocs(topic string) map[string]interface{} {
 			NeedsIssues: true,
 		},
 		"robot-burndown": {
-			Flag: "--robot-burndown <sprint|current>", Description: "Sprint burndown data.",
+			Flag:        "--robot-burndown <sprint|current>",
+			Description: "Sprint burndown data.",
 			NeedsIssues: true,
 		},
 		"robot-drift": {
-			Flag: "--robot-drift", Description: "Drift detection from saved baseline.",
+			Flag:        "--robot-drift",
+			Description: "Drift detection from saved baseline.",
+			NeedsIssues: true,
+		},
+		"robot-impact": {
+			Flag:        "--robot-impact <path[,path...]>",
+			Description: "Analyze bead impact for files that may be modified.",
 			NeedsIssues: true,
 		},
 	}
+}
+
+func generateRobotCapabilities() map[string]interface{} {
+	docs := robotCommandDocs()
+	names := make([]string, 0, len(docs))
+	for name := range docs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	commands := make([]map[string]interface{}, 0, len(names))
+	for _, name := range names {
+		doc := docs[name]
+		entry := map[string]interface{}{
+			"name":         name,
+			"flag":         doc.Flag,
+			"description":  doc.Description,
+			"needs_issues": doc.NeedsIssues,
+		}
+		if len(doc.KeyFields) > 0 {
+			entry["key_fields"] = doc.KeyFields
+		}
+		if len(doc.Params) > 0 {
+			entry["params"] = doc.Params
+		}
+		commands = append(commands, entry)
+	}
+
+	return map[string]interface{}{
+		"generated_at":          time.Now().UTC().Format(time.RFC3339),
+		"tool":                  "bv",
+		"version":               version.Version,
+		"contract_version":      robotContractVersion,
+		"default_robot_command": "bv --robot-triage",
+		"output_formats":        []string{"json", "toon"},
+		"commands":              commands,
+		"docs_topics":           robotDocsTopics(),
+		"schema_command":        "bv --robot-schema",
+		"environment_variables": robotEnvVars(),
+		"exit_codes":            robotExitCodes(),
+		"stream_contract": map[string]string{
+			"stdout": "Structured robot data only for robot commands.",
+			"stderr": "Diagnostics, warnings, and actionable errors.",
+		},
+	}
+}
+
+// generateRobotDocs returns machine-readable documentation for AI agents (bd-2v50).
+// Topics: guide, commands, examples, env, exit-codes, all.
+func generateRobotDocs(topic string) map[string]interface{} {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result := map[string]interface{}{
+		"generated_at":  now,
+		"output_format": robotOutputFormat,
+		"version":       version.Version,
+		"topic":         topic,
+	}
+
+	guide := map[string]interface{}{
+		"description": "bv (Beads Viewer) provides structural analysis of the beads issue tracker DAG. It is the primary interface for AI agents to understand project state, plan work, and discover high-impact tasks.",
+		"quickstart": []string{
+			"bv --robot-triage               # Full triage with recommendations",
+			"bv --robot-next                  # Single top pick for immediate work",
+			"bv --robot-plan                  # Dependency-respecting execution plan",
+			"bv --robot-insights              # Deep graph analysis (PageRank, betweenness, etc.)",
+			"bv --robot-triage-by-track       # Parallel work streams for multi-agent coordination",
+			"bv --robot-capabilities          # Machine-readable command manifest",
+			"bv --robot-schema                # JSON Schema definitions for all commands",
+		},
+		"data_source": ".beads/issues.jsonl and git history (correlations)",
+		"output_modes": map[string]string{
+			"json": "Default structured output",
+			"toon": "Token-optimized notation (saves ~30-50% tokens)",
+		},
+	}
+
+	commands := robotCommandDocs()
 
 	examples := []map[string]string{
 		{"description": "Get top 3 picks for immediate work", "command": "bv --robot-triage | jq '.triage.quick_ref.top_picks[:3]'"},
@@ -7320,25 +7554,8 @@ func generateRobotDocs(topic string) map[string]interface{} {
 		{"description": "Show token savings estimate", "command": "bv --robot-triage --format toon --stats"},
 	}
 
-	envVars := map[string]string{
-		"BEADS_DB":            "Path to beads database file or .beads directory (overrides BEADS_DIR; overridden by --db flag)",
-		"BEADS_DIR":           "Path to .beads directory (fallback when BEADS_DB and --db are not set)",
-		"BV_OUTPUT_FORMAT":    "Default output format: json or toon (overridden by --format)",
-		"TOON_DEFAULT_FORMAT": "Fallback format if BV_OUTPUT_FORMAT not set",
-		"TOON_STATS":          "Set to 1 to show JSON vs TOON token estimates on stderr",
-		"TOON_KEY_FOLDING":    "TOON key folding mode",
-		"TOON_INDENT":         "TOON indentation level (0-16)",
-		"BV_PRETTY_JSON":      "Set to 1 for indented JSON output",
-		"BV_ROBOT":            "Set to 1 to force robot mode (clean stdout)",
-		"BV_SEARCH_MODE":      "Search mode: text or hybrid",
-		"BV_SEARCH_PRESET":    "Hybrid search preset name",
-	}
-
-	exitCodes := map[string]string{
-		"0": "Success",
-		"1": "Error (general failure, drift critical)",
-		"2": "Invalid arguments or drift warning",
-	}
+	envVars := robotEnvVars()
+	exitCodes := robotExitCodes()
 
 	switch topic {
 	case "guide":
@@ -7359,7 +7576,14 @@ func generateRobotDocs(topic string) map[string]interface{} {
 		result["exit_codes"] = exitCodes
 	default:
 		result["error"] = "Unknown topic: " + topic
-		result["available_topics"] = []string{"guide", "commands", "examples", "env", "exit-codes", "all"}
+		topics := robotDocsTopics()
+		result["available_topics"] = topics
+		if suggestion := suggestClosest(topic, topics); suggestion != "" {
+			result["did_you_mean"] = suggestion
+			result["suggested_action"] = "Run `bv --robot-docs " + suggestion + "`"
+		} else {
+			result["suggested_action"] = "Run `bv --robot-docs guide` or `bv --robot-docs all`"
+		}
 	}
 
 	return result
@@ -7632,11 +7856,51 @@ func generateRobotSchemas() RobotSchemas {
 			},
 		},
 	}
+	for name, doc := range robotCommandDocs() {
+		if _, ok := commands[name]; !ok {
+			commands[name] = genericRobotCommandSchema(name, doc)
+		}
+	}
 
 	return RobotSchemas{
-		SchemaVersion: "1.0.0",
+		SchemaVersion: robotContractVersion,
 		GeneratedAt:   now,
 		Envelope:      envelope,
 		Commands:      commands,
 	}
+}
+
+func genericRobotCommandSchema(name string, doc robotCommandDoc) map[string]interface{} {
+	properties := map[string]interface{}{
+		"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+		"data_hash":    map[string]interface{}{"type": "string"},
+		"output_format": map[string]interface{}{
+			"type": "string",
+			"enum": []string{"json", "toon"},
+		},
+		"version": map[string]interface{}{"type": "string"},
+	}
+	if !doc.NeedsIssues {
+		delete(properties, "data_hash")
+	}
+
+	return map[string]interface{}{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"title":                titleCaseRobotCommand(name) + " Output",
+		"description":          doc.Description,
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": true,
+	}
+}
+
+func titleCaseRobotCommand(name string) string {
+	parts := strings.Split(strings.ReplaceAll(name, "-", " "), " ")
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, " ")
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/recipe"
+	flag "github.com/spf13/pflag"
 )
 
 func runCommandWithTimeout(t *testing.T, dir, exe string, args ...string) (string, string, error) {
@@ -103,6 +104,7 @@ func TestRobotFlagsOutputJSON(t *testing.T) {
 		{"--robot-insights"},
 		{"--robot-priority"},
 		{"--robot-recipes"},
+		{"--robot-capabilities"},
 		{"--robot-docs", "commands"},
 		{"--robot-next"},
 		{"--robot-triage"},
@@ -165,6 +167,7 @@ func TestCLIFlagCompatibility(t *testing.T) {
 			"Robot & Planning Flags:",
 			"Export & Reporting:",
 			"Agent File Management:",
+			"--robot-capabilities",
 			"-f, --format",
 			"-l, --label",
 			"-r, --recipe",
@@ -181,6 +184,96 @@ func TestCLIFlagCompatibility(t *testing.T) {
 			t.Fatalf("expected version output, got %q", out)
 		}
 	})
+}
+
+func TestUnknownFlagErrorSuggestsNearestFlag(t *testing.T) {
+	exe := buildTestBinary(t)
+
+	stdout, stderr, err := runCommandWithTimeout(t, t.TempDir(), exe, "--robot-triag")
+	if err == nil {
+		t.Fatalf("expected unknown flag to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected empty stdout for unknown flag, got:\n%s", stdout)
+	}
+	for _, want := range []string{"unknown flag: --robot-triag", "Did you mean --robot-triage?"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q\nstderr:\n%s", want, stderr)
+		}
+	}
+	if strings.Count(stderr, "unknown flag: --robot-triag") != 1 {
+		t.Fatalf("expected unknown flag error once, got:\n%s", stderr)
+	}
+}
+
+func TestEnumFlagErrorSuggestsNearestValue(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("graph-format", "json", "")
+	if err := fs.Set("graph-format", "jsno"); err != nil {
+		t.Fatalf("set graph-format: %v", err)
+	}
+
+	err := validateEnumFlags(fs, []enumFlagRule{{name: "graph-format", allowed: []string{"json", "dot", "mermaid"}}})
+	if err == nil {
+		t.Fatal("expected invalid enum error")
+	}
+	if !strings.Contains(err.Error(), `did you mean "json"?`) {
+		t.Fatalf("missing did-you-mean hint: %v", err)
+	}
+}
+
+func TestRobotCapabilitiesManifest(t *testing.T) {
+	capabilities := generateRobotCapabilities()
+	if capabilities["tool"] != "bv" {
+		t.Fatalf("tool = %v, want bv", capabilities["tool"])
+	}
+	if capabilities["contract_version"] != robotContractVersion {
+		t.Fatalf("contract_version = %v, want %s", capabilities["contract_version"], robotContractVersion)
+	}
+	commands, ok := capabilities["commands"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("commands has unexpected type %T", capabilities["commands"])
+	}
+	seen := map[string]bool{}
+	for _, command := range commands {
+		name, _ := command["name"].(string)
+		seen[name] = true
+	}
+	for _, name := range []string{"robot-triage", "robot-capabilities", "robot-schema", "robot-related", "robot-file-hotspots"} {
+		if !seen[name] {
+			t.Fatalf("capabilities missing command %q", name)
+		}
+	}
+	if _, ok := capabilities["environment_variables"].(map[string]string); !ok {
+		t.Fatalf("environment_variables has unexpected type %T", capabilities["environment_variables"])
+	}
+	if _, ok := capabilities["exit_codes"].(map[string]string); !ok {
+		t.Fatalf("exit_codes has unexpected type %T", capabilities["exit_codes"])
+	}
+}
+
+func TestRobotDocsUnknownTopicSuggestsNearestTopic(t *testing.T) {
+	docs := generateRobotDocs("guied")
+	if docs["did_you_mean"] != "guide" {
+		t.Fatalf("did_you_mean = %v, want guide; docs=%v", docs["did_you_mean"], docs)
+	}
+	if action, _ := docs["suggested_action"].(string); !strings.Contains(action, "bv --robot-docs guide") {
+		t.Fatalf("suggested_action missing exact command: %v", docs["suggested_action"])
+	}
+}
+
+func TestRobotSchemaCoversDocumentedRobotCommands(t *testing.T) {
+	schemas := generateRobotSchemas()
+	for name := range robotCommandDocs() {
+		if _, ok := schemas.Commands[name]; !ok {
+			t.Fatalf("schema missing documented command %q", name)
+		}
+	}
+	for _, name := range []string{"robot-capabilities", "robot-related", "robot-file-hotspots", "robot-impact"} {
+		if _, ok := schemas.Commands[name]; !ok {
+			t.Fatalf("schema missing %q", name)
+		}
+	}
 }
 
 func TestModifierFlagValidation(t *testing.T) {
@@ -268,16 +361,12 @@ func TestApplyRecipeFilters_ActionableAndHasBlockers(t *testing.T) {
 		},
 	}
 	actionable := applyRecipeFilters(issues, r)
-	if len(actionable) != 1 || actionable[0].ID != "A" {
-		t.Fatalf("expected only A actionable, got %#v", actionable)
-	}
+	requireIssueIDs(t, actionable, "A")
 
 	r.Filters.Actionable = nil
 	r.Filters.HasBlockers = ptrBool(true)
 	blocked := applyRecipeFilters(issues, r)
-	if len(blocked) != 1 || blocked[0].ID != "B" {
-		t.Fatalf("expected only B when HasBlockers=true, got %#v", blocked)
-	}
+	requireIssueIDs(t, blocked, "B")
 }
 
 func TestApplyRecipeFilters_TitleAndPrefix(t *testing.T) {
@@ -293,9 +382,7 @@ func TestApplyRecipeFilters_TitleAndPrefix(t *testing.T) {
 		},
 	}
 	got := applyRecipeFilters(issues, r)
-	if len(got) != 1 || got[0].ID != "API-2" {
-		t.Fatalf("expected API-2 only, got %#v", got)
-	}
+	requireIssueIDs(t, got, "API-2")
 }
 
 func TestApplyRecipeFilters_TagsAndDates(t *testing.T) {
@@ -334,9 +421,7 @@ func TestApplyRecipeFilters_DatesBlockersAndPrefix(t *testing.T) {
 		IDPrefix:      "API-2",
 	}}
 	got := applyRecipeFilters(issues, r)
-	if len(got) != 1 || got[0].ID != "API-2" {
-		t.Fatalf("expected only API-2 to match blockers/date/prefix filters, got %#v", got)
-	}
+	requireIssueIDs(t, got, "API-2")
 
 	r.Filters.HasBlockers = ptrBool(false)
 	got = applyRecipeFilters(issues, r)
@@ -355,30 +440,22 @@ func TestApplyRecipeSort_DefaultsAndFields(t *testing.T) {
 	// Priority default ascending
 	r := &recipe.Recipe{Sort: recipe.SortConfig{Field: "priority"}}
 	sorted := applyRecipeSort(append([]model.Issue{}, issues...), r)
-	if sorted[0].ID != "B" {
-		t.Fatalf("priority sort expected B first, got %s", sorted[0].ID)
-	}
+	requireIssueIDs(t, sorted[:1], "B")
 
 	// Created default descending (newest first)
 	r.Sort = recipe.SortConfig{Field: "created"}
 	sorted = applyRecipeSort(append([]model.Issue{}, issues...), r)
-	if sorted[0].ID != "B" {
-		t.Fatalf("created sort expected newest (B) first, got %s", sorted[0].ID)
-	}
+	requireIssueIDs(t, sorted[:1], "B")
 
 	// Title ascending explicit desc
 	r.Sort = recipe.SortConfig{Field: "title", Direction: "desc"}
 	sorted = applyRecipeSort(append([]model.Issue{}, issues...), r)
-	if sorted[0].ID != "A" {
-		t.Fatalf("title desc expected A (zzz) first, got %s", sorted[0].ID)
-	}
+	requireIssueIDs(t, sorted[:1], "A")
 
 	// Status ascending (string compare)
 	r.Sort = recipe.SortConfig{Field: "status"}
 	sorted = applyRecipeSort(append([]model.Issue{}, issues...), r)
-	if sorted[0].ID != "A" { // both open; stable sort keeps original order
-		t.Fatalf("status sort expected A first, got %s", sorted[0].ID)
-	}
+	requireIssueIDs(t, sorted[:1], "A")
 
 	// ID natural sort
 	idIssues := []model.Issue{
@@ -388,30 +465,41 @@ func TestApplyRecipeSort_DefaultsAndFields(t *testing.T) {
 	}
 	r.Sort = recipe.SortConfig{Field: "id"}
 	sortedIDs := applyRecipeSort(append([]model.Issue{}, idIssues...), r)
-	if sortedIDs[0].ID != "bv-1" || sortedIDs[1].ID != "bv-2" || sortedIDs[2].ID != "bv-10" {
-		t.Fatalf("id natural sort failed: got %v", []string{sortedIDs[0].ID, sortedIDs[1].ID, sortedIDs[2].ID})
-	}
+	requireIssueIDs(t, sortedIDs, "bv-1", "bv-2", "bv-10")
 
 	// Unknown field should preserve order
 	r.Sort = recipe.SortConfig{Field: "unknown"}
 	sorted = applyRecipeSort(append([]model.Issue{}, issues...), r)
-	if sorted[0].ID != "A" || sorted[1].ID != "B" {
-		t.Fatalf("unknown sort field should keep original order, got %v", []string{sorted[0].ID, sorted[1].ID})
-	}
+	requireIssueIDs(t, sorted, "A", "B")
 }
 
 func TestFormatCycle(t *testing.T) {
-	if got := formatCycle(nil); got != "(empty)" {
-		t.Fatalf("expected (empty), got %q", got)
-	}
+	requireString(t, formatCycle(nil), "(empty)")
 	c := []string{"X", "Y", "Z"}
 	want := "X → Y → Z → X"
-	if got := formatCycle(c); got != want {
-		t.Fatalf("formatCycle mismatch: got %q want %q", got, want)
-	}
+	requireString(t, formatCycle(c), want)
 }
 
 func ptrBool(b bool) *bool { return &b }
+
+func requireIssueIDs(t *testing.T, issues []model.Issue, want ...string) {
+	t.Helper()
+	if len(issues) != len(want) {
+		t.Fatalf("issue count = %d, want %d; issues=%#v", len(issues), len(want), issues)
+	}
+	for i := range want {
+		if strings.Compare(issues[i].ID, want[i]) != 0 {
+			t.Fatalf("issue[%d].ID = %q, want %q; issues=%#v", i, issues[i].ID, want[i], issues)
+		}
+	}
+}
+
+func requireString(t *testing.T, got, want string) {
+	t.Helper()
+	if strings.Compare(got, want) != 0 {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
 
 func writeTestBeadsFixture(t *testing.T, dir string) {
 	t.Helper()
