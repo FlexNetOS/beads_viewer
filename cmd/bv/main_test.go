@@ -240,6 +240,21 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--robot-triage", "--format", "json"},
 		},
 		{
+			name: "json false still avoids tui",
+			args: []string{"--json=false"},
+			want: []string{"--robot-triage", "--format=json"},
+		},
+		{
+			name: "toon defaults to triage",
+			args: []string{"--toon"},
+			want: []string{"--robot-triage", "--format", "toon"},
+		},
+		{
+			name: "output toon defaults to triage",
+			args: []string{"--output=toon"},
+			want: []string{"--robot-triage", "--format=toon"},
+		},
+		{
 			name: "triage subcommand",
 			args: []string{"triage", "--json", "--name", "backend", "--limit", "3"},
 			want: []string{"--robot-triage", "--format", "json", "--label", "backend", "--robot-max-results", "3"},
@@ -250,14 +265,44 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--robot-schema", "--schema-command", "robot-triage", "--format", "json"},
 		},
 		{
+			name: "schema accepts output alias before command",
+			args: []string{"schema", "--json", "triage"},
+			want: []string{"--robot-schema", "--schema-command", "robot-triage", "--format", "json"},
+		},
+		{
 			name: "search subcommand",
 			args: []string{"search", "login", "oauth", "--json", "--limit=5"},
 			want: []string{"--search", "login oauth", "--robot-search", "--format", "json", "--search-limit=5"},
 		},
 		{
+			name: "search accepts limit before query",
+			args: []string{"search", "--limit", "5", "login", "oauth", "--json"},
+			want: []string{"--search", "login oauth", "--robot-search", "--search-limit", "5", "--format", "json"},
+		},
+		{
+			name: "search accepts output alias between query terms",
+			args: []string{"search", "login", "--json", "oauth"},
+			want: []string{"--search", "login oauth", "--robot-search", "--format", "json"},
+		},
+		{
 			name: "graph format positional",
 			args: []string{"graph", "mermaid", "--output", "json"},
 			want: []string{"--robot-graph", "--graph-format", "mermaid", "--format", "json"},
+		},
+		{
+			name: "graph accepts output alias before format",
+			args: []string{"graph", "--json", "mermaid"},
+			want: []string{"--robot-graph", "--graph-format", "mermaid", "--format", "json"},
+		},
+		{
+			name: "related accepts output alias before target",
+			args: []string{"related", "--json", "bv-123"},
+			want: []string{"--robot-related", "bv-123", "--format", "json"},
+		},
+		{
+			name: "docs accepts output alias before topic",
+			args: []string{"docs", "--json", "guide"},
+			want: []string{"--robot-docs", "guide", "--format", "json"},
 		},
 	}
 
@@ -285,8 +330,12 @@ func TestAgentIntentAliasesOutputJSON(t *testing.T) {
 		{"triage", "--json"},
 		{"capabilities", "--json"},
 		{"docs", "guide", "--json"},
+		{"docs", "--json", "guide"},
 		{"schema", "triage", "--json"},
+		{"schema", "--json", "triage"},
+		{"graph", "--json", "mermaid"},
 		{"--name", "backend", "--json"},
+		{"--json=false"},
 	} {
 		stdout, stderr, err := runCommandWithTimeout(t, tmpDir, exe, args...)
 		if err != nil {

@@ -471,7 +471,7 @@ func rewriteAgentIntentArgs(args []string) []string {
 	}
 
 	rewritten := rewriteAgentIntentFlagAliases(args, "")
-	if containsAgentJSONAlias(args) && !hasPrimaryRobotArg(rewritten) && !hasNonRobotPrimaryArg(rewritten) {
+	if containsAgentStructuredOutputAlias(args) && !hasPrimaryRobotArg(rewritten) && !hasNonRobotPrimaryArg(rewritten) {
 		return append([]string{"--robot-triage"}, rewritten...)
 	}
 	return rewritten
@@ -555,6 +555,7 @@ func rewriteAgentIntentCommand(args []string) ([]string, bool) {
 }
 
 func rewriteRobotDocsIntent(rest []string) []string {
+	prefix, rest := consumeLeadingAgentIntentFlagAliases(rest, "docs")
 	out := []string{"--robot-docs"}
 	topic := "guide"
 	if len(rest) > 0 && isPositionalValue(rest[0]) {
@@ -562,42 +563,59 @@ func rewriteRobotDocsIntent(rest []string) []string {
 		rest = rest[1:]
 	}
 	out = append(out, topic)
+	out = append(out, prefix...)
 	return append(out, rewriteAgentIntentFlagAliases(rest, "docs")...)
 }
 
 func rewriteRobotSchemaIntent(rest []string) []string {
+	prefix, rest := consumeLeadingAgentIntentFlagAliases(rest, "schema")
 	out := []string{"--robot-schema"}
 	if len(rest) > 0 && isPositionalValue(rest[0]) {
 		out = append(out, "--schema-command", normalizeRobotCommandName(rest[0]))
 		rest = rest[1:]
 	}
+	out = append(out, prefix...)
 	return append(out, rewriteAgentIntentFlagAliases(rest, "schema")...)
 }
 
 func rewriteRobotSearchIntent(rest []string) []string {
+	prefix := make([]string, 0, len(rest))
 	queryParts := make([]string, 0, len(rest))
-	for len(rest) > 0 && isPositionalValue(rest[0]) {
-		queryParts = append(queryParts, rest[0])
-		rest = rest[1:]
+	for len(rest) > 0 {
+		if isPositionalValue(rest[0]) {
+			queryParts = append(queryParts, rest[0])
+			rest = rest[1:]
+			continue
+		}
+		aliases, remaining := consumeLeadingAgentIntentFlagAliases(rest, "search")
+		if len(aliases) == 0 {
+			break
+		}
+		prefix = append(prefix, aliases...)
+		rest = remaining
 	}
 
 	out := []string{"--robot-search"}
 	if len(queryParts) > 0 {
 		out = append([]string{"--search", strings.Join(queryParts, " ")}, out...)
 	}
+	out = append(out, prefix...)
 	return append(out, rewriteAgentIntentFlagAliases(rest, "search")...)
 }
 
 func rewriteRobotGraphIntent(rest []string) []string {
+	prefix, rest := consumeLeadingAgentIntentFlagAliases(rest, "graph")
 	out := []string{"--robot-graph"}
 	if len(rest) > 0 && isGraphFormat(rest[0]) {
 		out = append(out, "--graph-format", strings.ToLower(rest[0]))
 		rest = rest[1:]
 	}
+	out = append(out, prefix...)
 	return append(out, rewriteAgentIntentFlagAliases(rest, "graph")...)
 }
 
 func rewriteRobotValueIntent(rest []string, context, boolFlag, valueFlag, defaultValue string) []string {
+	prefix, rest := consumeLeadingAgentIntentFlagAliases(rest, context)
 	out := make([]string, 0, len(rest)+3)
 	if boolFlag != "" {
 		out = append(out, boolFlag)
@@ -608,7 +626,46 @@ func rewriteRobotValueIntent(rest []string, context, boolFlag, valueFlag, defaul
 	} else if defaultValue != "" {
 		out = append(out, valueFlag, defaultValue)
 	}
+	out = append(out, prefix...)
 	return append(out, rewriteAgentIntentFlagAliases(rest, context)...)
+}
+
+func consumeLeadingAgentIntentFlagAliases(args []string, context string) ([]string, []string) {
+	rewritten := make([]string, 0, len(args))
+	rest := args
+	for len(rest) > 0 {
+		arg := rest[0]
+		switch arg {
+		case "--json":
+			rewritten = append(rewritten, "--format", "json")
+			rest = rest[1:]
+		case "--toon":
+			rewritten = append(rewritten, "--format", "toon")
+			rest = rest[1:]
+		case "--output", "-o":
+			if len(rest) >= 2 && isRobotOutputFormat(rest[1]) {
+				rewritten = append(rewritten, "--format", strings.ToLower(rest[1]))
+				rest = rest[2:]
+				continue
+			}
+			return rewritten, rest
+		case "--limit":
+			if len(rest) >= 2 {
+				rewritten = append(rewritten, limitFlagForAgentContext(context), rest[1])
+				rest = rest[2:]
+				continue
+			}
+			return rewritten, rest
+		default:
+			if alias, ok := rewriteLeadingAgentIntentEqualsAlias(arg, context); ok {
+				rewritten = append(rewritten, alias)
+				rest = rest[1:]
+				continue
+			}
+			return rewritten, rest
+		}
+	}
+	return rewritten, rest
 }
 
 func rewriteAgentIntentFlagAliases(args []string, context string) []string {
@@ -639,27 +696,47 @@ func rewriteAgentIntentFlagAliases(args []string, context string) []string {
 }
 
 func rewriteAgentIntentEqualsArg(arg, context string) string {
+	if alias, ok := rewriteAgentIntentEqualsAlias(arg, context); ok {
+		return alias
+	}
+	return arg
+}
+
+func rewriteAgentIntentEqualsAlias(arg, context string) (string, bool) {
+	if alias, ok := rewriteLeadingAgentIntentEqualsAlias(arg, context); ok {
+		return alias, true
+	}
+	switch {
+	case strings.HasPrefix(arg, "--name="):
+		return "--label=" + strings.TrimPrefix(arg, "--name="), true
+	}
+	return "", false
+}
+
+func rewriteLeadingAgentIntentEqualsAlias(arg, context string) (string, bool) {
 	switch {
 	case arg == "--json=true":
-		return "--format=json"
+		return "--format=json", true
 	case arg == "--json=false":
-		return "--format=json"
+		return "--format=json", true
+	case arg == "--toon=true":
+		return "--format=toon", true
+	case arg == "--toon=false":
+		return "--format=toon", true
 	case strings.HasPrefix(arg, "--output="):
 		value := strings.TrimPrefix(arg, "--output=")
 		if isRobotOutputFormat(value) {
-			return "--format=" + strings.ToLower(value)
+			return "--format=" + strings.ToLower(value), true
 		}
 	case strings.HasPrefix(arg, "-o="):
 		value := strings.TrimPrefix(arg, "-o=")
 		if isRobotOutputFormat(value) {
-			return "--format=" + strings.ToLower(value)
+			return "--format=" + strings.ToLower(value), true
 		}
-	case strings.HasPrefix(arg, "--name="):
-		return "--label=" + strings.TrimPrefix(arg, "--name=")
 	case strings.HasPrefix(arg, "--limit="):
-		return limitFlagForAgentContext(context) + "=" + strings.TrimPrefix(arg, "--limit=")
+		return limitFlagForAgentContext(context) + "=" + strings.TrimPrefix(arg, "--limit="), true
 	}
-	return arg
+	return "", false
 }
 
 func limitFlagForAgentContext(context string) string {
@@ -691,12 +768,15 @@ func normalizeRobotCommandName(value string) string {
 	return "robot-" + value
 }
 
-func containsAgentJSONAlias(args []string) bool {
+func containsAgentStructuredOutputAlias(args []string) bool {
 	for i, arg := range args {
-		if arg == "--json" || arg == "--json=true" || strings.EqualFold(arg, "--output=json") || strings.EqualFold(arg, "-o=json") {
+		if arg == "--json" || arg == "--json=true" || arg == "--json=false" || arg == "--toon" || arg == "--toon=true" || arg == "--toon=false" {
 			return true
 		}
-		if (arg == "--output" || arg == "-o") && i+1 < len(args) && strings.EqualFold(args[i+1], "json") {
+		if strings.EqualFold(arg, "--output=json") || strings.EqualFold(arg, "-o=json") || strings.EqualFold(arg, "--output=toon") || strings.EqualFold(arg, "-o=toon") {
+			return true
+		}
+		if (arg == "--output" || arg == "-o") && i+1 < len(args) && isRobotOutputFormat(args[i+1]) {
 			return true
 		}
 	}
