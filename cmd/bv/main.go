@@ -2747,12 +2747,12 @@ func main() {
 				fmt.Println("")
 				fmt.Println("Watch mode enabled. Monitoring for changes...")
 
-				// Collect all issues.jsonl files to watch
+				// Collect all Beads JSONL files to watch
 				var watchFiles []string
 				var watchers []*watcher.Watcher
 
 				if *workspaceConfig != "" {
-					// Workspace mode: watch all repos' issues.jsonl files (bv-79)
+					// Workspace mode: watch all repos' discovered Beads JSONL files (bv-79)
 					wsConfig, err := workspace.LoadConfig(*workspaceConfig)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Error loading workspace config: %v\n", err)
@@ -2769,26 +2769,26 @@ func main() {
 							repoPath = filepath.Join(workspaceRoot, repoPath)
 						}
 						beadsDir := filepath.Join(repoPath, repo.GetBeadsPath())
-						issuesFile, err := loader.FindJSONLPath(beadsDir)
+						beadsFile, err := loader.FindJSONLPath(beadsDir)
 						if err != nil {
-							fmt.Printf("  → Warning: could not find issues.jsonl for repo %s: %v\n", repo.GetName(), err)
+							fmt.Printf("  → Warning: could not find Beads JSONL for repo %s: %v\n", repo.GetName(), err)
 							continue
 						}
-						watchFiles = append(watchFiles, issuesFile)
+						watchFiles = append(watchFiles, beadsFile)
 					}
 
 					if len(watchFiles) == 0 {
-						fmt.Fprintf(os.Stderr, "Error: no valid issues.jsonl files found in workspace\n")
+						fmt.Fprintf(os.Stderr, "Error: no valid Beads JSONL files found in workspace\n")
 						os.Exit(1)
 					}
 				} else {
-					// Single-repo mode: watch current directory's issues.jsonl
-					cwd, cwdErr := os.Getwd()
-					if cwdErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: could not get working directory for watcher: %v\n", cwdErr)
+					// Single-repo mode: watch the same JSONL file that was selected for loading.
+					watchFile, err := resolveSingleRepoWatchFile(projectDir)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+						os.Exit(1)
 					}
-					issuesFile := filepath.Join(cwd, ".beads", "issues.jsonl")
-					watchFiles = append(watchFiles, issuesFile)
+					watchFiles = append(watchFiles, watchFile)
 				}
 
 				// Print watched files
@@ -8495,6 +8495,18 @@ func robotFlagExampleForm(flag string) string {
 	return flag
 }
 
+func resolveSingleRepoWatchFile(projectDir string) (string, error) {
+	beadsDir, err := loader.GetBeadsDir(projectDir)
+	if err != nil {
+		return "", fmt.Errorf("getting beads directory: %w", err)
+	}
+	beadsPath, err := loader.FindJSONLPath(beadsDir)
+	if err != nil {
+		return "", fmt.Errorf("finding Beads JSONL file: %w", err)
+	}
+	return beadsPath, nil
+}
+
 func agentIntentAliasDocs() []map[string]string {
 	return []map[string]string{
 		{"agent_instinct": "bv --json", "canonical": "bv --robot-triage --format json"},
@@ -8542,7 +8554,7 @@ func generateRobotDocs(topic string) map[string]interface{} {
 			"bv triage --json                 # Short alias for robot-triage",
 			"bv capabilities --json           # Short alias for robot-capabilities",
 		},
-		"data_source": ".beads/issues.jsonl and git history (correlations)",
+		"data_source": ".beads/beads.jsonl, .beads/issues.jsonl, or BEADS_DB plus git history (correlations)",
 		"output_modes": map[string]string{
 			"json": "Default structured output",
 			"toon": "Token-optimized notation (saves ~30-50% tokens)",

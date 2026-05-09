@@ -514,6 +514,26 @@ func TestEnumFlagErrorSuggestsNearestValue(t *testing.T) {
 	}
 }
 
+func TestResolveSingleRepoWatchFileUsesDiscoveredBeadsJSONL(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "issues.jsonl"), []byte(`{"id":"legacy"}`+"\n"), 0644); err != nil {
+		t.Fatalf("write issues.jsonl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "beads.jsonl"), []byte(`{"id":"canonical"}`+"\n"), 0644); err != nil {
+		t.Fatalf("write beads.jsonl: %v", err)
+	}
+
+	watchFile, err := resolveSingleRepoWatchFile(tmpDir)
+	if err != nil {
+		t.Fatalf("resolveSingleRepoWatchFile: %v", err)
+	}
+	requireString(t, filepath.Base(watchFile), "beads.jsonl")
+}
+
 func TestRobotCapabilitiesManifest(t *testing.T) {
 	capabilities := generateRobotCapabilities()
 	if capabilities["tool"] != "bv" {
@@ -620,6 +640,13 @@ func TestRobotDocsPreferSafeAgentCommandExamples(t *testing.T) {
 	}
 	requireContainsString(t, quickstart, "bv robot-triage --json           # Full triage with recommendations")
 	requireContainsString(t, quickstart, "bv robot-capabilities --json     # Machine-readable command manifest")
+	dataSource, ok := guide["data_source"].(string)
+	if !ok {
+		t.Fatalf("data_source has unexpected type %T", guide["data_source"])
+	}
+	if !strings.Contains(dataSource, ".beads/beads.jsonl") || !strings.Contains(dataSource, ".beads/issues.jsonl") {
+		t.Fatalf("data_source should mention both canonical and compatibility JSONL paths, got %q", dataSource)
+	}
 
 	exampleDocs := generateRobotDocs("examples")
 	examples, ok := exampleDocs["examples"].([]map[string]string)
