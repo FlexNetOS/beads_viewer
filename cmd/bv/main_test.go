@@ -739,6 +739,33 @@ func TestRobotSchemaCommandSchemaMatchesHandlerOutputs(t *testing.T) {
 	}
 }
 
+func TestRobotDocsSchemaMatchesTopicOutputs(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-docs")
+	for _, name := range []string{
+		"generated_at",
+		"output_format",
+		"version",
+		"topic",
+		"guide",
+		"commands",
+		"examples",
+		"environment_variables",
+		"exit_codes",
+		"error",
+		"available_topics",
+		"did_you_mean",
+		"suggested_action",
+	} {
+		if properties[name] == nil {
+			t.Fatalf("robot-docs schema missing property %q", name)
+		}
+	}
+	if properties["data_hash"] != nil {
+		t.Fatalf("robot-docs schema still exposes stale generic data_hash property")
+	}
+}
+
 func TestRobotDiffSchemaMatchesHandlerEnvelope(t *testing.T) {
 	schemas := generateRobotSchemas()
 	schema := schemas.Commands["robot-diff"]

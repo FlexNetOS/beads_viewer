@@ -8652,6 +8652,7 @@ func generateRobotSchemas() RobotSchemas {
 
 	commands := map[string]map[string]interface{}{
 		"robot-capabilities": robotCapabilitiesSchema(),
+		"robot-docs":         robotDocsOutputSchema(),
 		"robot-schema":       robotSchemaOutputSchema(),
 		"robot-triage": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
@@ -9500,6 +9501,46 @@ func robotSchemaOutputSchema() map[string]interface{} {
 			{"required": []string{"schema_version", "generated_at", "envelope", "commands"}},
 			{"required": []string{"schema_version", "generated_at", "command", "schema"}},
 		},
+		"additionalProperties": false,
+	}
+}
+
+func robotDocsOutputSchema() map[string]interface{} {
+	stringMapSchema := map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": map[string]interface{}{"type": "string"},
+	}
+
+	return map[string]interface{}{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Robot Docs Output",
+		"description": "Machine-readable documentation for one robot docs topic, or an unknown-topic diagnostic",
+		"type":        "object",
+		"properties": map[string]interface{}{
+			"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+			"output_format": map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+			"version":       map[string]interface{}{"type": "string"},
+			"topic":         map[string]interface{}{"type": "string"},
+			"guide":         map[string]interface{}{"type": "object"},
+			"commands": map[string]interface{}{
+				"type":                 "object",
+				"additionalProperties": map[string]interface{}{"type": "object"},
+			},
+			"examples": map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "object"},
+			},
+			"environment_variables": stringMapSchema,
+			"exit_codes":            stringMapSchema,
+			"error":                 map[string]interface{}{"type": "string"},
+			"available_topics": map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+			},
+			"did_you_mean":     map[string]interface{}{"type": "string"},
+			"suggested_action": map[string]interface{}{"type": "string"},
+		},
+		"required":             []string{"generated_at", "output_format", "version", "topic"},
 		"additionalProperties": false,
 	}
 }
