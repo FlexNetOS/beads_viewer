@@ -909,6 +909,91 @@ func TestRobotSuggestSchemaMatchesOutputShape(t *testing.T) {
 	}
 }
 
+func TestRobotLabelSchemasMatchHandlerOutputs(t *testing.T) {
+	schemas := generateRobotSchemas()
+
+	healthProps := requireRobotSchemaProperties(t, schemas, "robot-label-health")
+	for _, name := range []string{"analysis_config", "results", "usage_hints"} {
+		if healthProps[name] == nil {
+			t.Fatalf("robot-label-health schema missing top-level property %q", name)
+		}
+	}
+	for _, stale := range []string{"output_format", "version"} {
+		if healthProps[stale] != nil {
+			t.Fatalf("robot-label-health schema still exposes stale top-level property %q", stale)
+		}
+	}
+	healthResultProps := requireNestedSchemaProperties(t, healthProps["results"], "robot-label-health results")
+	for _, name := range []string{"total_labels", "healthy_count", "warning_count", "critical_count", "labels", "summaries", "attention_needed"} {
+		if healthResultProps[name] == nil {
+			t.Fatalf("robot-label-health results schema missing %q", name)
+		}
+	}
+
+	flowProps := requireRobotSchemaProperties(t, schemas, "robot-label-flow")
+	for _, name := range []string{"flow", "analysis_config", "usage_hints"} {
+		if flowProps[name] == nil {
+			t.Fatalf("robot-label-flow schema missing top-level property %q", name)
+		}
+	}
+	for _, stale := range []string{"output_format", "version"} {
+		if flowProps[stale] != nil {
+			t.Fatalf("robot-label-flow schema still exposes stale top-level property %q", stale)
+		}
+	}
+	flowNestedProps := requireNestedSchemaProperties(t, flowProps["flow"], "robot-label-flow flow")
+	for _, name := range []string{"labels", "flow_matrix", "dependencies", "critical_paths", "bottleneck_labels", "total_cross_label_deps"} {
+		if flowNestedProps[name] == nil {
+			t.Fatalf("robot-label-flow nested schema missing %q", name)
+		}
+	}
+
+	attentionProps := requireRobotSchemaProperties(t, schemas, "robot-label-attention")
+	for _, name := range []string{"limit", "total_labels", "labels", "usage_hints"} {
+		if attentionProps[name] == nil {
+			t.Fatalf("robot-label-attention schema missing top-level property %q", name)
+		}
+	}
+	for _, stale := range []string{"output_format", "version"} {
+		if attentionProps[stale] != nil {
+			t.Fatalf("robot-label-attention schema still exposes stale top-level property %q", stale)
+		}
+	}
+	labelsProp, ok := attentionProps["labels"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-label-attention labels has unexpected type %T", attentionProps["labels"])
+	}
+	labelItemProps := requireNestedSchemaProperties(t, labelsProp["items"], "robot-label-attention label item")
+	for _, name := range []string{"rank", "label", "attention_score", "normalized_score", "reason", "open_count", "blocked_count", "stale_count", "pagerank_sum", "velocity_factor"} {
+		if labelItemProps[name] == nil {
+			t.Fatalf("robot-label-attention label schema missing %q", name)
+		}
+	}
+}
+
+func requireRobotSchemaProperties(t *testing.T, schemas RobotSchemas, command string) map[string]interface{} {
+	t.Helper()
+	schema := schemas.Commands[command]
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("%s properties has unexpected type %T", command, schema["properties"])
+	}
+	return properties
+}
+
+func requireNestedSchemaProperties(t *testing.T, schema interface{}, name string) map[string]interface{} {
+	t.Helper()
+	schemaMap, ok := schema.(map[string]interface{})
+	if !ok {
+		t.Fatalf("%s schema has unexpected type %T", name, schema)
+	}
+	properties, ok := schemaMap["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("%s properties has unexpected type %T", name, schemaMap["properties"])
+	}
+	return properties
+}
+
 func TestModifierFlagValidation(t *testing.T) {
 	exe := buildTestBinary(t)
 	tmpDir := t.TempDir()

@@ -8899,6 +8899,52 @@ func generateRobotSchemas() RobotSchemas {
 			},
 			"required": []string{"generated_at", "data_hash", "filters", "suggestions", "usage_hints"},
 		},
+		"robot-label-health": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Label Health Output",
+			"description": "Per-label health metrics with analysis config and usage hints",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":    map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":       map[string]interface{}{"type": "string"},
+				"analysis_config": labelHealthConfigSchema(),
+				"results":         labelAnalysisResultSchema(),
+				"usage_hints":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			},
+			"required": []string{"generated_at", "data_hash", "analysis_config", "results", "usage_hints"},
+		},
+		"robot-label-flow": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Label Flow Output",
+			"description": "Cross-label dependency flow analysis with analysis config and usage hints",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":    map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":       map[string]interface{}{"type": "string"},
+				"flow":            crossLabelFlowSchema(),
+				"analysis_config": labelHealthConfigSchema(),
+				"usage_hints":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			},
+			"required": []string{"generated_at", "data_hash", "flow", "analysis_config", "usage_hints"},
+		},
+		"robot-label-attention": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Label Attention Output",
+			"description": "Attention-ranked labels requiring focus",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":    map[string]interface{}{"type": "string"},
+				"limit":        map[string]interface{}{"type": "integer"},
+				"total_labels": map[string]interface{}{"type": "integer"},
+				"labels": map[string]interface{}{
+					"type":  "array",
+					"items": labelAttentionItemSchema(),
+				},
+				"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			},
+			"required": []string{"generated_at", "data_hash", "limit", "total_labels", "labels", "usage_hints"},
+		},
 		"robot-burndown": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Burndown Output",
@@ -9055,6 +9101,75 @@ func suggestionStatsSchema() map[string]interface{} {
 			"actionable_count":      map[string]interface{}{"type": "integer"},
 		},
 		"required": []string{"total", "by_type", "by_confidence", "high_confidence_count", "actionable_count"},
+	}
+}
+
+func labelHealthConfigSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"stale_threshold_days":  map[string]interface{}{"type": "integer"},
+			"velocity_weight":       map[string]interface{}{"type": "number"},
+			"freshness_weight":      map[string]interface{}{"type": "number"},
+			"flow_weight":           map[string]interface{}{"type": "number"},
+			"criticality_weight":    map[string]interface{}{"type": "number"},
+			"min_issues_for_health": map[string]interface{}{"type": "integer"},
+			"include_closed_in_flow": map[string]interface{}{
+				"type": "boolean",
+			},
+		},
+	}
+}
+
+func labelAnalysisResultSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"generated_at":     map[string]interface{}{"type": "string", "format": "date-time"},
+			"total_labels":     map[string]interface{}{"type": "integer"},
+			"healthy_count":    map[string]interface{}{"type": "integer"},
+			"warning_count":    map[string]interface{}{"type": "integer"},
+			"critical_count":   map[string]interface{}{"type": "integer"},
+			"labels":           map[string]interface{}{"type": "array"},
+			"summaries":        map[string]interface{}{"type": "array"},
+			"cross_label_flow": crossLabelFlowSchema(),
+			"attention_needed": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		},
+		"required": []string{"generated_at", "total_labels", "healthy_count", "warning_count", "critical_count", "labels", "summaries", "attention_needed"},
+	}
+}
+
+func crossLabelFlowSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"labels":                 map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"flow_matrix":            map[string]interface{}{"type": "array"},
+			"dependencies":           map[string]interface{}{"type": "array"},
+			"critical_paths":         map[string]interface{}{"type": "array"},
+			"bottleneck_labels":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"total_cross_label_deps": map[string]interface{}{"type": "integer"},
+		},
+		"required": []string{"labels", "flow_matrix", "dependencies", "critical_paths", "bottleneck_labels", "total_cross_label_deps"},
+	}
+}
+
+func labelAttentionItemSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"rank":             map[string]interface{}{"type": "integer"},
+			"label":            map[string]interface{}{"type": "string"},
+			"attention_score":  map[string]interface{}{"type": "number"},
+			"normalized_score": map[string]interface{}{"type": "number"},
+			"reason":           map[string]interface{}{"type": "string"},
+			"open_count":       map[string]interface{}{"type": "integer"},
+			"blocked_count":    map[string]interface{}{"type": "integer"},
+			"stale_count":      map[string]interface{}{"type": "integer"},
+			"pagerank_sum":     map[string]interface{}{"type": "number"},
+			"velocity_factor":  map[string]interface{}{"type": "number"},
+		},
+		"required": []string{"rank", "label", "attention_score", "normalized_score", "reason", "open_count", "blocked_count", "stale_count", "pagerank_sum", "velocity_factor"},
 	}
 }
 
