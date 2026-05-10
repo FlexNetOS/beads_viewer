@@ -560,7 +560,19 @@ func registerPhaseOneRobotHandlers(registry *RobotRegistry, cfg phaseOneRobotHan
 		FlagPtr:     cfg.RobotMetricsFlag,
 		Description: "Output runtime performance metrics",
 		Handler: func(ctx RobotContext) error {
-			if err := ctx.EncoderOrDefault().Encode(metrics.GetAllMetrics()); err != nil {
+			snapshot := metrics.GetAllMetrics()
+			output := struct {
+				RobotEnvelope
+				Timing []metrics.TimingStats `json:"timing,omitempty"`
+				Cache  []metrics.CacheStats  `json:"cache,omitempty"`
+				Memory metrics.MemoryStats   `json:"memory"`
+			}{
+				RobotEnvelope: NewRobotEnvelope(ctx.DataHash),
+				Timing:        snapshot.Timing,
+				Cache:         snapshot.Cache,
+				Memory:        snapshot.Memory,
+			}
+			if err := ctx.EncoderOrDefault().Encode(output); err != nil {
 				return fmt.Errorf("encoding metrics: %w", err)
 			}
 			return nil

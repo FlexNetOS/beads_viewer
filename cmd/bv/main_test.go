@@ -1073,6 +1073,69 @@ func TestRobotRecipesOutputIncludesEnvelope(t *testing.T) {
 	}
 }
 
+func TestRobotMetricsSchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-metrics")
+	for _, name := range []string{"generated_at", "data_hash", "output_format", "version", "timing", "cache", "memory"} {
+		if properties[name] == nil {
+			t.Fatalf("robot-metrics schema missing top-level property %q", name)
+		}
+	}
+
+	memoryProps := requireNestedSchemaProperties(t, properties["memory"], "robot-metrics memory")
+	for _, name := range []string{"heap_alloc_mb", "heap_sys_mb", "heap_objects_k", "gc_cycles", "gc_pause_ms", "goroutine_count"} {
+		if memoryProps[name] == nil {
+			t.Fatalf("robot-metrics memory schema missing %q", name)
+		}
+	}
+
+	timingProp, ok := properties["timing"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-metrics timing has unexpected type %T", properties["timing"])
+	}
+	timingProps := requireNestedSchemaProperties(t, timingProp["items"], "robot-metrics timing item")
+	for _, name := range []string{"name", "count", "total_ms", "avg_ms", "max_ms", "min_ms"} {
+		if timingProps[name] == nil {
+			t.Fatalf("robot-metrics timing schema missing %q", name)
+		}
+	}
+
+	cacheProp, ok := properties["cache"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-metrics cache has unexpected type %T", properties["cache"])
+	}
+	cacheProps := requireNestedSchemaProperties(t, cacheProp["items"], "robot-metrics cache item")
+	for _, name := range []string{"name", "hits", "misses", "total", "hit_rate"} {
+		if cacheProps[name] == nil {
+			t.Fatalf("robot-metrics cache schema missing %q", name)
+		}
+	}
+}
+
+func TestRobotMetricsOutputIncludesEnvelope(t *testing.T) {
+	exe := buildTestBinary(t)
+	tmpDir := t.TempDir()
+	writeTestBeadsFixture(t, tmpDir)
+
+	out, stderr, err := runCommandWithTimeout(t, tmpDir, exe, "--robot-metrics")
+	if err != nil {
+		t.Fatalf("robot-metrics failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("robot-metrics JSON: %v\n%s", err, out)
+	}
+	for _, name := range []string{"generated_at", "data_hash", "output_format", "version", "memory"} {
+		if payload[name] == nil {
+			t.Fatalf("robot-metrics output missing %q: %#v", name, payload)
+		}
+	}
+	if _, ok := payload["memory"].(map[string]any); !ok {
+		t.Fatalf("robot-metrics memory has unexpected type %T", payload["memory"])
+	}
+}
+
 func TestRobotSprintSchemasMatchHandlerOutputs(t *testing.T) {
 	schemas := generateRobotSchemas()
 

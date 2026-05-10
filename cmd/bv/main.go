@@ -8928,6 +8928,28 @@ func generateRobotSchemas() RobotSchemas {
 			},
 			"required": []string{"generated_at", "output_format", "version", "recipes"},
 		},
+		"robot-metrics": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Metrics Output",
+			"description": "Performance metrics: timing, cache hit rates, and memory usage",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":     map[string]interface{}{"type": "string"},
+				"output_format": map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+				"version":       map[string]interface{}{"type": "string"},
+				"timing": map[string]interface{}{
+					"type":  "array",
+					"items": timingMetricSchema(),
+				},
+				"cache": map[string]interface{}{
+					"type":  "array",
+					"items": cacheMetricSchema(),
+				},
+				"memory": memoryMetricSchema(),
+			},
+			"required": []string{"generated_at", "data_hash", "output_format", "version", "memory"},
+		},
 		"robot-suggest": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Suggest Output",
@@ -9330,6 +9352,50 @@ func recipeSummarySchema() map[string]interface{} {
 			"source":      map[string]interface{}{"type": "string", "enum": []string{"builtin", "user", "project"}},
 		},
 		"required": []string{"name", "description", "source"},
+	}
+}
+
+func timingMetricSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"name":     map[string]interface{}{"type": "string"},
+			"count":    map[string]interface{}{"type": "integer"},
+			"total_ms": map[string]interface{}{"type": "number"},
+			"avg_ms":   map[string]interface{}{"type": "number"},
+			"max_ms":   map[string]interface{}{"type": "number"},
+			"min_ms":   map[string]interface{}{"type": "number"},
+		},
+		"required": []string{"name", "count", "total_ms", "avg_ms", "max_ms"},
+	}
+}
+
+func cacheMetricSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"name":     map[string]interface{}{"type": "string"},
+			"hits":     map[string]interface{}{"type": "integer"},
+			"misses":   map[string]interface{}{"type": "integer"},
+			"total":    map[string]interface{}{"type": "integer"},
+			"hit_rate": map[string]interface{}{"type": "number"},
+		},
+		"required": []string{"name", "hits", "misses", "total", "hit_rate"},
+	}
+}
+
+func memoryMetricSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"heap_alloc_mb":   map[string]interface{}{"type": "number"},
+			"heap_sys_mb":     map[string]interface{}{"type": "number"},
+			"heap_objects_k":  map[string]interface{}{"type": "number"},
+			"gc_cycles":       map[string]interface{}{"type": "integer"},
+			"gc_pause_ms":     map[string]interface{}{"type": "number"},
+			"goroutine_count": map[string]interface{}{"type": "integer"},
+		},
+		"required": []string{"heap_alloc_mb", "heap_sys_mb", "heap_objects_k", "gc_cycles", "gc_pause_ms", "goroutine_count"},
 	}
 }
 
