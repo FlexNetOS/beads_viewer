@@ -492,9 +492,15 @@ func registerPhaseOneRobotHandlers(registry *RobotRegistry, cfg phaseOneRobotHan
 			})
 
 			output := struct {
-				Recipes []recipe.RecipeSummary `json:"recipes"`
+				GeneratedAt  string                 `json:"generated_at"`
+				OutputFormat string                 `json:"output_format,omitempty"`
+				Version      string                 `json:"version,omitempty"`
+				Recipes      []recipe.RecipeSummary `json:"recipes"`
 			}{
-				Recipes: summaries,
+				GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+				OutputFormat: robotOutputFormat,
+				Version:      version.Version,
+				Recipes:      summaries,
 			}
 
 			if err := ctx.EncoderOrDefault().Encode(output); err != nil {

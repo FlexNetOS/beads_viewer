@@ -1026,6 +1026,53 @@ func TestRobotAlertsSchemaMatchesHandlerOutput(t *testing.T) {
 	}
 }
 
+func TestRobotRecipesSchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-recipes")
+	for _, name := range []string{"generated_at", "output_format", "version", "recipes"} {
+		if properties[name] == nil {
+			t.Fatalf("robot-recipes schema missing top-level property %q", name)
+		}
+	}
+	if properties["data_hash"] != nil {
+		t.Fatalf("robot-recipes schema should not require issue data_hash")
+	}
+
+	recipesProp, ok := properties["recipes"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-recipes recipes has unexpected type %T", properties["recipes"])
+	}
+	recipeProps := requireNestedSchemaProperties(t, recipesProp["items"], "robot-recipes recipe item")
+	for _, name := range []string{"name", "description", "source"} {
+		if recipeProps[name] == nil {
+			t.Fatalf("robot-recipes recipe schema missing %q", name)
+		}
+	}
+}
+
+func TestRobotRecipesOutputIncludesEnvelope(t *testing.T) {
+	exe := buildTestBinary(t)
+	tmpDir := t.TempDir()
+
+	out, stderr, err := runCommandWithTimeout(t, tmpDir, exe, "--robot-recipes")
+	if err != nil {
+		t.Fatalf("robot-recipes failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("robot-recipes JSON: %v\n%s", err, out)
+	}
+	for _, name := range []string{"generated_at", "output_format", "version", "recipes"} {
+		if payload[name] == nil {
+			t.Fatalf("robot-recipes output missing %q: %#v", name, payload)
+		}
+	}
+	if _, ok := payload["recipes"].([]any); !ok {
+		t.Fatalf("robot-recipes recipes has unexpected type %T", payload["recipes"])
+	}
+}
+
 func TestRobotSprintSchemasMatchHandlerOutputs(t *testing.T) {
 	schemas := generateRobotSchemas()
 

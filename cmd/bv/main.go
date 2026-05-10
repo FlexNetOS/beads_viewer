@@ -8912,6 +8912,22 @@ func generateRobotSchemas() RobotSchemas {
 			},
 			"required": []string{"generated_at", "data_hash", "output_format", "version", "alerts", "summary", "usage_hints"},
 		},
+		"robot-recipes": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Recipes Output",
+			"description": "Recipe names, descriptions, and sources for pre-filtering work",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+				"output_format": map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+				"version":       map[string]interface{}{"type": "string"},
+				"recipes": map[string]interface{}{
+					"type":  "array",
+					"items": recipeSummarySchema(),
+				},
+			},
+			"required": []string{"generated_at", "output_format", "version", "recipes"},
+		},
 		"robot-suggest": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Suggest Output",
@@ -9302,6 +9318,18 @@ func alertSummarySchema() map[string]interface{} {
 			"info":     map[string]interface{}{"type": "integer"},
 		},
 		"required": []string{"total", "critical", "warning", "info"},
+	}
+}
+
+func recipeSummarySchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"name":        map[string]interface{}{"type": "string"},
+			"description": map[string]interface{}{"type": "string"},
+			"source":      map[string]interface{}{"type": "string", "enum": []string{"builtin", "user", "project"}},
+		},
+		"required": []string{"name", "description", "source"},
 	}
 }
 
