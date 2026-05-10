@@ -2511,17 +2511,19 @@ func main() {
 
 			if *robotSearch {
 				out := robotSearchOutput{
-					GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-					DataHash:    dataHash,
-					Query:       *semanticQuery,
-					Provider:    embedCfg.Provider,
-					Model:       embedCfg.Model,
-					Dim:         embedder.Dim(),
-					IndexPath:   indexPath,
-					Index:       syncStats,
-					Loaded:      loaded,
-					Limit:       limit,
-					Mode:        searchCfg.Mode,
+					GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+					DataHash:     dataHash,
+					OutputFormat: robotOutputFormat,
+					Version:      version.Version,
+					Query:        *semanticQuery,
+					Provider:     embedCfg.Provider,
+					Model:        embedCfg.Model,
+					Dim:          embedder.Dim(),
+					IndexPath:    indexPath,
+					Index:        syncStats,
+					Loaded:       loaded,
+					Limit:        limit,
+					Mode:         searchCfg.Mode,
 				}
 				if searchCfg.Mode == search.SearchModeHybrid {
 					out.Preset = resolvedPreset
@@ -8658,6 +8660,7 @@ func generateRobotSchemas() RobotSchemas {
 		"robot-docs":         robotDocsOutputSchema(),
 		"robot-help":         robotHelpOutputSchema(),
 		"robot-schema":       robotSchemaOutputSchema(),
+		"robot-search":       robotSearchOutputSchema(),
 		"robot-triage": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Triage Output",
@@ -9564,6 +9567,47 @@ func robotHelpOutputSchema() map[string]interface{} {
 		},
 		"required":             []string{"generated_at", "output_format", "version", "topic", "guide"},
 		"additionalProperties": false,
+	}
+}
+
+func robotSearchOutputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Robot Search Output",
+		"description": "Semantic or hybrid issue search results with index metadata and usage hints",
+		"type":        "object",
+		"properties": map[string]interface{}{
+			"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+			"data_hash":     map[string]interface{}{"type": "string"},
+			"output_format": map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+			"version":       map[string]interface{}{"type": "string"},
+			"query":         map[string]interface{}{"type": "string"},
+			"provider":      map[string]interface{}{"type": "string"},
+			"model":         map[string]interface{}{"type": "string"},
+			"dim":           map[string]interface{}{"type": "integer"},
+			"index_path":    map[string]interface{}{"type": "string"},
+			"index":         map[string]interface{}{"type": "object"},
+			"loaded":        map[string]interface{}{"type": "boolean"},
+			"limit":         map[string]interface{}{"type": "integer"},
+			"mode":          map[string]interface{}{"type": "string", "enum": []string{"text", "hybrid"}},
+			"preset":        map[string]interface{}{"type": "string"},
+			"weights":       map[string]interface{}{"type": "object"},
+			"results": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"issue_id":         map[string]interface{}{"type": "string"},
+						"score":            map[string]interface{}{"type": "number"},
+						"text_score":       map[string]interface{}{"type": "number"},
+						"title":            map[string]interface{}{"type": "string"},
+						"component_scores": map[string]interface{}{"type": "object"},
+					},
+				},
+			},
+			"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		},
+		"required": []string{"generated_at", "data_hash", "output_format", "version", "query", "provider", "dim", "index_path", "index", "loaded", "limit", "mode", "results"},
 	}
 }
 

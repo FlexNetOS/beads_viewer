@@ -783,6 +783,31 @@ func TestRobotHelpSchemaMatchesStructuredHelpAlias(t *testing.T) {
 	}
 }
 
+func TestRobotSearchSchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-search")
+	for _, name := range []string{
+		"generated_at", "data_hash", "output_format", "version",
+		"query", "provider", "model", "dim", "index_path", "index",
+		"loaded", "limit", "mode", "preset", "weights", "results", "usage_hints",
+	} {
+		if properties[name] == nil {
+			t.Fatalf("robot-search schema missing top-level property %q", name)
+		}
+	}
+
+	resultsProp, ok := properties["results"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-search results has unexpected type %T", properties["results"])
+	}
+	resultProps := requireNestedSchemaProperties(t, resultsProp["items"], "robot-search result item")
+	for _, name := range []string{"issue_id", "score", "text_score", "title", "component_scores"} {
+		if resultProps[name] == nil {
+			t.Fatalf("robot-search result schema missing %q", name)
+		}
+	}
+}
+
 func TestRobotDiffSchemaMatchesHandlerEnvelope(t *testing.T) {
 	schemas := generateRobotSchemas()
 	schema := schemas.Commands["robot-diff"]
