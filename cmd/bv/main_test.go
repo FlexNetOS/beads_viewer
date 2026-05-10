@@ -971,6 +971,33 @@ func TestRobotLabelSchemasMatchHandlerOutputs(t *testing.T) {
 	}
 }
 
+func TestRobotPrioritySchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-priority")
+	for _, name := range []string{
+		"analysis_config", "status", "recommendations", "field_descriptions",
+		"filters", "summary", "usage_hints",
+	} {
+		if properties[name] == nil {
+			t.Fatalf("robot-priority schema missing top-level property %q", name)
+		}
+	}
+
+	filters := requireNestedSchemaProperties(t, properties["filters"], "robot-priority filters")
+	for _, name := range []string{"min_confidence", "max_results", "by_label", "by_assignee"} {
+		if filters[name] == nil {
+			t.Fatalf("robot-priority filters schema missing %q", name)
+		}
+	}
+
+	summary := requireNestedSchemaProperties(t, properties["summary"], "robot-priority summary")
+	for _, name := range []string{"total_issues", "recommendations", "high_confidence"} {
+		if summary[name] == nil {
+			t.Fatalf("robot-priority summary schema missing %q", name)
+		}
+	}
+}
+
 func requireRobotSchemaProperties(t *testing.T, schemas RobotSchemas, command string) map[string]interface{} {
 	t.Helper()
 	schema := schemas.Commands[command]

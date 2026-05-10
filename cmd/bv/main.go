@@ -8794,10 +8794,37 @@ func generateRobotSchemas() RobotSchemas {
 			"properties": map[string]interface{}{
 				"generated_at":    map[string]interface{}{"type": "string", "format": "date-time"},
 				"data_hash":       map[string]interface{}{"type": "string"},
-				"recommendations": map[string]interface{}{"type": "array"},
+				"as_of":           map[string]interface{}{"type": "string"},
+				"as_of_commit":    map[string]interface{}{"type": "string"},
+				"analysis_config": map[string]interface{}{"type": "object"},
 				"status":          map[string]interface{}{"type": "object"},
-				"usage_hints":     map[string]interface{}{"type": "array"},
+				"label_scope":     map[string]interface{}{"type": "string"},
+				"label_context":   map[string]interface{}{"type": "object"},
+				"recommendations": map[string]interface{}{"type": "array"},
+				"field_descriptions": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+				},
+				"filters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"min_confidence": map[string]interface{}{"type": "number"},
+						"max_results":    map[string]interface{}{"type": "integer"},
+						"by_label":       map[string]interface{}{"type": "string"},
+						"by_assignee":    map[string]interface{}{"type": "string"},
+					},
+				},
+				"summary": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"total_issues":    map[string]interface{}{"type": "integer"},
+						"recommendations": map[string]interface{}{"type": "integer"},
+						"high_confidence": map[string]interface{}{"type": "integer"},
+					},
+				},
+				"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 			},
+			"required": []string{"generated_at", "data_hash", "analysis_config", "status", "recommendations", "field_descriptions", "filters", "summary", "usage_hints"},
 		},
 		"robot-graph": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
