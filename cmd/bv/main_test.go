@@ -1026,6 +1026,66 @@ func TestRobotAlertsSchemaMatchesHandlerOutput(t *testing.T) {
 	}
 }
 
+func TestRobotSprintSchemasMatchHandlerOutputs(t *testing.T) {
+	schemas := generateRobotSchemas()
+
+	listProps := requireRobotSchemaProperties(t, schemas, "robot-sprint-list")
+	for _, name := range []string{"output_format", "version", "sprint_count", "sprints"} {
+		if listProps[name] == nil {
+			t.Fatalf("robot-sprint-list schema missing top-level property %q", name)
+		}
+	}
+	sprintsProp, ok := listProps["sprints"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-sprint-list sprints has unexpected type %T", listProps["sprints"])
+	}
+	sprintItemProps := requireNestedSchemaProperties(t, sprintsProp["items"], "robot-sprint-list sprint item")
+	for _, name := range []string{"id", "name", "start_date", "end_date", "bead_ids", "velocity_target"} {
+		if sprintItemProps[name] == nil {
+			t.Fatalf("robot-sprint-list sprint schema missing %q", name)
+		}
+	}
+
+	showProps := requireRobotSchemaProperties(t, schemas, "robot-sprint-show")
+	for _, name := range []string{"output_format", "version", "sprint"} {
+		if showProps[name] == nil {
+			t.Fatalf("robot-sprint-show schema missing top-level property %q", name)
+		}
+	}
+	showSprintProps := requireNestedSchemaProperties(t, showProps["sprint"], "robot-sprint-show sprint")
+	for _, name := range []string{"id", "name", "start_date", "end_date", "bead_ids", "velocity_target"} {
+		if showSprintProps[name] == nil {
+			t.Fatalf("robot-sprint-show sprint schema missing %q", name)
+		}
+	}
+}
+
+func TestRobotCapacitySchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-capacity")
+	for _, name := range []string{
+		"output_format", "version", "agents", "label", "open_issue_count",
+		"total_minutes", "total_days", "serial_minutes", "parallel_minutes",
+		"parallelizable_pct", "estimated_days", "critical_path_length",
+		"critical_path", "actionable_count", "actionable", "bottlenecks",
+	} {
+		if properties[name] == nil {
+			t.Fatalf("robot-capacity schema missing top-level property %q", name)
+		}
+	}
+
+	bottlenecksProp, ok := properties["bottlenecks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-capacity bottlenecks has unexpected type %T", properties["bottlenecks"])
+	}
+	bottleneckProps := requireNestedSchemaProperties(t, bottlenecksProp["items"], "robot-capacity bottleneck item")
+	for _, name := range []string{"id", "title", "blocks_count", "blocks"} {
+		if bottleneckProps[name] == nil {
+			t.Fatalf("robot-capacity bottleneck schema missing %q", name)
+		}
+	}
+}
+
 func requireRobotSchemaProperties(t *testing.T, schemas RobotSchemas, command string) map[string]interface{} {
 	t.Helper()
 	schema := schemas.Commands[command]

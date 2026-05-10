@@ -8979,6 +8979,70 @@ func generateRobotSchemas() RobotSchemas {
 			},
 			"required": []string{"generated_at", "data_hash", "limit", "total_labels", "labels", "usage_hints"},
 		},
+		"robot-sprint-list": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Sprint List Output",
+			"description": "All configured sprints with the standard robot envelope",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":     map[string]interface{}{"type": "string"},
+				"output_format": map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+				"version":       map[string]interface{}{"type": "string"},
+				"sprint_count":  map[string]interface{}{"type": "integer"},
+				"sprints": map[string]interface{}{
+					"type":  "array",
+					"items": sprintSchema(),
+				},
+			},
+			"required": []string{"generated_at", "data_hash", "output_format", "version", "sprint_count", "sprints"},
+		},
+		"robot-sprint-show": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Sprint Show Output",
+			"description": "A single configured sprint with the standard robot envelope",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":     map[string]interface{}{"type": "string"},
+				"output_format": map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+				"version":       map[string]interface{}{"type": "string"},
+				"sprint":        sprintSchema(),
+			},
+			"required": []string{"generated_at", "data_hash", "output_format", "version", "sprint"},
+		},
+		"robot-capacity": {
+			"$schema":     "https://json-schema.org/draft/2020-12/schema",
+			"title":       "Robot Capacity Output",
+			"description": "Capacity simulation and dependency-aware completion projection",
+			"type":        "object",
+			"properties": map[string]interface{}{
+				"generated_at":         map[string]interface{}{"type": "string", "format": "date-time"},
+				"data_hash":            map[string]interface{}{"type": "string"},
+				"output_format":        map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+				"version":              map[string]interface{}{"type": "string"},
+				"agents":               map[string]interface{}{"type": "integer"},
+				"label":                map[string]interface{}{"type": "string"},
+				"open_issue_count":     map[string]interface{}{"type": "integer"},
+				"total_minutes":        map[string]interface{}{"type": "integer"},
+				"total_days":           map[string]interface{}{"type": "number"},
+				"serial_minutes":       map[string]interface{}{"type": "integer"},
+				"parallel_minutes":     map[string]interface{}{"type": "integer"},
+				"parallelizable_pct":   map[string]interface{}{"type": "number"},
+				"estimated_days":       map[string]interface{}{"type": "number"},
+				"critical_path_length": map[string]interface{}{"type": "integer"},
+				"critical_path":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"actionable_count":     map[string]interface{}{"type": "integer"},
+				"actionable":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"bottlenecks":          map[string]interface{}{"type": "array", "items": capacityBottleneckSchema()},
+			},
+			"required": []string{
+				"generated_at", "data_hash", "output_format", "version", "agents",
+				"open_issue_count", "total_minutes", "total_days", "serial_minutes",
+				"parallel_minutes", "parallelizable_pct", "estimated_days",
+				"critical_path_length", "critical_path", "actionable_count", "actionable",
+			},
+		},
 		"robot-burndown": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Burndown Output",
@@ -9238,6 +9302,36 @@ func alertSummarySchema() map[string]interface{} {
 			"info":     map[string]interface{}{"type": "integer"},
 		},
 		"required": []string{"total", "critical", "warning", "info"},
+	}
+}
+
+func sprintSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id":              map[string]interface{}{"type": "string"},
+			"name":            map[string]interface{}{"type": "string"},
+			"start_date":      map[string]interface{}{"type": "string", "format": "date-time"},
+			"end_date":        map[string]interface{}{"type": "string", "format": "date-time"},
+			"bead_ids":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"velocity_target": map[string]interface{}{"type": "number"},
+			"created_at":      map[string]interface{}{"type": "string", "format": "date-time"},
+			"updated_at":      map[string]interface{}{"type": "string", "format": "date-time"},
+		},
+		"required": []string{"id", "name"},
+	}
+}
+
+func capacityBottleneckSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id":           map[string]interface{}{"type": "string"},
+			"title":        map[string]interface{}{"type": "string"},
+			"blocks_count": map[string]interface{}{"type": "integer"},
+			"blocks":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		},
+		"required": []string{"id", "title", "blocks_count"},
 	}
 }
 
