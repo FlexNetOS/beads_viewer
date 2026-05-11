@@ -8080,13 +8080,13 @@ func robotCommandDocs() map[string]robotCommandDoc {
 		},
 		"robot-triage-by-track": {
 			Flag: "--robot-triage-by-track", Description: "Triage grouped by independent parallel execution tracks.",
-			KeyFields:   []string{"tracks[].track_id", "tracks[].top_pick", "tracks[].items"},
+			KeyFields:   []string{"triage.recommendations_by_track[].track_id", "triage.recommendations_by_track[].top_pick", "triage.recommendations_by_track[].claim_command"},
 			Params:      []string{"--graph-root <id>"},
 			NeedsIssues: true,
 		},
 		"robot-triage-by-label": {
 			Flag: "--robot-triage-by-label", Description: "Triage grouped by label for area-focused agents.",
-			KeyFields:   []string{"labels[].label", "labels[].top_pick", "labels[].items"},
+			KeyFields:   []string{"triage.recommendations_by_label[].label", "triage.recommendations_by_label[].top_pick", "triage.recommendations_by_label[].claim_command"},
 			Params:      []string{"--graph-root <id>"},
 			NeedsIssues: true,
 		},
@@ -8743,6 +8743,18 @@ func generateRobotSchemas() RobotSchemas {
 			},
 			"required": []string{"generated_at", "data_hash", "id", "title", "score"},
 		},
+		"robot-triage-by-track": robotGroupedTriageOutputSchema(
+			"Robot Triage By Track Output",
+			"Triage recommendations grouped by independent parallel execution tracks",
+			"recommendations_by_track",
+			robotTrackRecommendationGroupSchema(),
+		),
+		"robot-triage-by-label": robotGroupedTriageOutputSchema(
+			"Robot Triage By Label Output",
+			"Triage recommendations grouped by label for area-focused agents",
+			"recommendations_by_label",
+			robotLabelRecommendationGroupSchema(),
+		),
 		"robot-plan": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Plan Output",
@@ -9609,6 +9621,70 @@ func robotSearchOutputSchema() map[string]interface{} {
 			"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 		},
 		"required": []string{"generated_at", "data_hash", "output_format", "version", "query", "provider", "dim", "index_path", "index", "loaded", "limit", "mode", "results"},
+	}
+}
+
+func robotGroupedTriageOutputSchema(title, description, groupProperty string, groupItemSchema map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       title,
+		"description": description,
+		"type":        "object",
+		"properties": map[string]interface{}{
+			"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+			"data_hash":    map[string]interface{}{"type": "string"},
+			"as_of":        map[string]interface{}{"type": "string"},
+			"as_of_commit": map[string]interface{}{"type": "string"},
+			"triage": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"meta":              map[string]interface{}{"type": "object"},
+					"quick_ref":         map[string]interface{}{"type": "object"},
+					"recommendations":   map[string]interface{}{"type": "array"},
+					"quick_wins":        map[string]interface{}{"type": "array"},
+					"blockers_to_clear": map[string]interface{}{"type": "array"},
+					"project_health":    map[string]interface{}{"type": "object"},
+					"commands":          map[string]interface{}{"type": "object"},
+					groupProperty: map[string]interface{}{
+						"type":  "array",
+						"items": groupItemSchema,
+					},
+				},
+				"required": []string{"meta", "quick_ref", "recommendations"},
+			},
+			"feedback":    map[string]interface{}{"type": "object"},
+			"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		},
+		"required": []string{"generated_at", "data_hash", "triage", "usage_hints"},
+	}
+}
+
+func robotTrackRecommendationGroupSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"track_id":        map[string]interface{}{"type": "string"},
+			"reason":          map[string]interface{}{"type": "string"},
+			"recommendations": map[string]interface{}{"type": "array"},
+			"top_pick":        map[string]interface{}{"type": "object"},
+			"claim_command":   map[string]interface{}{"type": "string"},
+			"total_unblocks":  map[string]interface{}{"type": "integer"},
+		},
+		"required": []string{"track_id", "reason", "recommendations", "total_unblocks"},
+	}
+}
+
+func robotLabelRecommendationGroupSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"label":           map[string]interface{}{"type": "string"},
+			"recommendations": map[string]interface{}{"type": "array"},
+			"top_pick":        map[string]interface{}{"type": "object"},
+			"claim_command":   map[string]interface{}{"type": "string"},
+			"total_unblocks":  map[string]interface{}{"type": "integer"},
+		},
+		"required": []string{"label", "recommendations", "total_unblocks"},
 	}
 }
 

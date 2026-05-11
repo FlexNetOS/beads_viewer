@@ -821,6 +821,79 @@ func TestRobotHistorySchemaMatchesHandlerOutput(t *testing.T) {
 	}
 }
 
+func TestRobotGroupedTriageSchemasMatchHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	for _, tc := range []struct {
+		command       string
+		groupProperty string
+		groupFields   []string
+	}{
+		{
+			command:       "robot-triage-by-track",
+			groupProperty: "recommendations_by_track",
+			groupFields:   []string{"track_id", "reason", "recommendations", "top_pick", "claim_command", "total_unblocks"},
+		},
+		{
+			command:       "robot-triage-by-label",
+			groupProperty: "recommendations_by_label",
+			groupFields:   []string{"label", "recommendations", "top_pick", "claim_command", "total_unblocks"},
+		},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			properties := requireRobotSchemaProperties(t, schemas, tc.command)
+			for _, name := range []string{"generated_at", "data_hash", "triage", "usage_hints"} {
+				if properties[name] == nil {
+					t.Fatalf("%s schema missing top-level property %q", tc.command, name)
+				}
+			}
+			for _, stale := range []string{"output_format", "version"} {
+				if properties[stale] != nil {
+					t.Fatalf("%s schema still exposes stale generic property %q", tc.command, stale)
+				}
+			}
+
+			triageSchema, ok := properties["triage"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("%s triage has unexpected type %T", tc.command, properties["triage"])
+			}
+			if required, ok := triageSchema["required"].([]string); ok {
+				for _, name := range required {
+					if name == tc.groupProperty {
+						t.Fatalf("%s should document optional grouped property %q without requiring it", tc.command, tc.groupProperty)
+					}
+				}
+			}
+
+			triageProps := requireNestedSchemaProperties(t, triageSchema, tc.command+" triage")
+			groupProp, ok := triageProps[tc.groupProperty].(map[string]interface{})
+			if !ok {
+				t.Fatalf("%s triage missing grouped property %q", tc.command, tc.groupProperty)
+			}
+			groupProps := requireNestedSchemaProperties(t, groupProp["items"], tc.command+" group item")
+			for _, name := range tc.groupFields {
+				if groupProps[name] == nil {
+					t.Fatalf("%s group schema missing %q", tc.command, name)
+				}
+			}
+		})
+	}
+}
+
+func TestRobotGroupedTriageDocsUseLiveJSONPaths(t *testing.T) {
+	docs := robotCommandDocs()
+	requireContainsString(t, docs["robot-triage-by-track"].KeyFields, "triage.recommendations_by_track[].top_pick")
+	requireContainsString(t, docs["robot-triage-by-label"].KeyFields, "triage.recommendations_by_label[].claim_command")
+	for _, stale := range []string{"tracks[].", "labels[]."} {
+		for name, doc := range docs {
+			for _, field := range doc.KeyFields {
+				if strings.Contains(field, stale) {
+					t.Fatalf("%s key field still uses stale grouped path %q", name, field)
+				}
+			}
+		}
+	}
+}
+
 func TestRobotDiffSchemaMatchesHandlerEnvelope(t *testing.T) {
 	schemas := generateRobotSchemas()
 	schema := schemas.Commands["robot-diff"]
