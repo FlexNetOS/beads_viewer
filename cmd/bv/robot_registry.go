@@ -1988,7 +1988,18 @@ func handleRobotCorrelationStats(ctx RobotContext) error {
 		return err
 	}
 
-	if err := ctx.EncoderOrDefault().Encode(feedbackStore.GetStats()); err != nil {
+	output := struct {
+		correlation.FeedbackStats
+		GeneratedAt  string `json:"generated_at"`
+		OutputFormat string `json:"output_format,omitempty"`
+		Version      string `json:"version,omitempty"`
+	}{
+		FeedbackStats: feedbackStore.GetStats(),
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		OutputFormat:  robotOutputFormat,
+		Version:       version.Version,
+	}
+	if err := ctx.EncoderOrDefault().Encode(output); err != nil {
 		return fmt.Errorf("encoding stats: %w", err)
 	}
 	return nil

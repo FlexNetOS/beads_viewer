@@ -821,6 +821,56 @@ func TestRobotHistorySchemaMatchesHandlerOutput(t *testing.T) {
 	}
 }
 
+func TestRobotCorrelationStatsSchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-correlation-stats")
+	for _, name := range []string{
+		"generated_at", "output_format", "version",
+		"total_feedback", "confirmed", "rejected", "ignored",
+		"accuracy_rate", "avg_confirm_conf", "avg_reject_conf",
+	} {
+		if properties[name] == nil {
+			t.Fatalf("robot-correlation-stats schema missing top-level property %q", name)
+		}
+	}
+	if properties["data_hash"] != nil {
+		t.Fatalf("robot-correlation-stats schema should not expose issue data_hash")
+	}
+
+	docs := robotCommandDocs()
+	requireContainsString(t, docs["robot-correlation-stats"].KeyFields, "total_feedback")
+	requireContainsString(t, docs["robot-correlation-stats"].KeyFields, "accuracy_rate")
+	for _, field := range docs["robot-correlation-stats"].KeyFields {
+		if field == "total" || field == "by_user" {
+			t.Fatalf("robot-correlation-stats key fields still contain stale field %q", field)
+		}
+	}
+}
+
+func TestRobotCorrelationStatsOutputIncludesEnvelope(t *testing.T) {
+	exe := buildTestBinary(t)
+	tmpDir := t.TempDir()
+	writeTestBeadsFixture(t, tmpDir)
+
+	out, stderr, err := runCommandWithTimeout(t, tmpDir, exe, "--robot-correlation-stats")
+	if err != nil {
+		t.Fatalf("robot-correlation-stats failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("robot-correlation-stats JSON: %v\n%s", err, out)
+	}
+	for _, name := range []string{"generated_at", "output_format", "version", "total_feedback", "confirmed", "rejected", "ignored"} {
+		if payload[name] == nil {
+			t.Fatalf("robot-correlation-stats output missing %q: %#v", name, payload)
+		}
+	}
+	if payload["data_hash"] != nil {
+		t.Fatalf("robot-correlation-stats output should not include data_hash: %#v", payload)
+	}
+}
+
 func TestRobotGroupedTriageSchemasMatchHandlerOutput(t *testing.T) {
 	schemas := generateRobotSchemas()
 	for _, tc := range []struct {

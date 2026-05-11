@@ -8140,7 +8140,7 @@ func robotCommandDocs() map[string]robotCommandDoc {
 		"robot-correlation-stats": {
 			Flag:        "--robot-correlation-stats",
 			Description: "Summary counts for saved correlation feedback.",
-			KeyFields:   []string{"total", "confirmed", "rejected", "by_user"},
+			KeyFields:   []string{"total_feedback", "confirmed", "rejected", "ignored", "accuracy_rate"},
 			NeedsIssues: false,
 		},
 		"robot-explain-correlation": {
@@ -8950,6 +8950,7 @@ func generateRobotSchemas() RobotSchemas {
 			},
 			"required": []string{"generated_at", "output_format", "version", "recipes"},
 		},
+		"robot-correlation-stats": robotCorrelationStatsOutputSchema(),
 		"robot-metrics": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Metrics Output",
@@ -9621,6 +9622,31 @@ func robotSearchOutputSchema() map[string]interface{} {
 			"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 		},
 		"required": []string{"generated_at", "data_hash", "output_format", "version", "query", "provider", "dim", "index_path", "index", "loaded", "limit", "mode", "results"},
+	}
+}
+
+func robotCorrelationStatsOutputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Robot Correlation Stats Output",
+		"description": "Summary counts and confidence aggregates for saved correlation feedback",
+		"type":        "object",
+		"properties": map[string]interface{}{
+			"generated_at":     map[string]interface{}{"type": "string", "format": "date-time"},
+			"output_format":    map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+			"version":          map[string]interface{}{"type": "string"},
+			"total_feedback":   map[string]interface{}{"type": "integer"},
+			"confirmed":        map[string]interface{}{"type": "integer"},
+			"rejected":         map[string]interface{}{"type": "integer"},
+			"ignored":          map[string]interface{}{"type": "integer"},
+			"accuracy_rate":    map[string]interface{}{"type": "number"},
+			"avg_confirm_conf": map[string]interface{}{"type": "number"},
+			"avg_reject_conf":  map[string]interface{}{"type": "number"},
+		},
+		"required": []string{
+			"generated_at", "output_format", "version", "total_feedback", "confirmed",
+			"rejected", "ignored", "accuracy_rate", "avg_confirm_conf", "avg_reject_conf",
+		},
 	}
 }
 
