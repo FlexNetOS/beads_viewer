@@ -808,6 +808,19 @@ func TestRobotSearchSchemaMatchesHandlerOutput(t *testing.T) {
 	}
 }
 
+func TestRobotHistorySchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-history")
+	for _, name := range []string{
+		"generated_at", "data_hash", "output_format", "version",
+		"git_range", "latest_commit_sha", "stats", "histories", "commit_index",
+	} {
+		if properties[name] == nil {
+			t.Fatalf("robot-history schema missing top-level property %q", name)
+		}
+	}
+}
+
 func TestRobotDiffSchemaMatchesHandlerEnvelope(t *testing.T) {
 	schemas := generateRobotSchemas()
 	schema := schemas.Commands["robot-diff"]

@@ -1906,7 +1906,16 @@ func handleRobotHistory(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) erro
 		}
 	}
 
-	if err := ctx.EncoderOrDefault().Encode(report); err != nil {
+	output := struct {
+		correlation.HistoryReport
+		OutputFormat string `json:"output_format,omitempty"`
+		Version      string `json:"version,omitempty"`
+	}{
+		HistoryReport: *report,
+		OutputFormat:  robotOutputFormat,
+		Version:       version.Version,
+	}
+	if err := ctx.EncoderOrDefault().Encode(output); err != nil {
 		return fmt.Errorf("encoding history report: %w", err)
 	}
 	return nil

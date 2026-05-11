@@ -8659,6 +8659,7 @@ func generateRobotSchemas() RobotSchemas {
 		"robot-capabilities": robotCapabilitiesSchema(),
 		"robot-docs":         robotDocsOutputSchema(),
 		"robot-help":         robotHelpOutputSchema(),
+		"robot-history":      robotHistoryOutputSchema(),
 		"robot-schema":       robotSchemaOutputSchema(),
 		"robot-search":       robotSearchOutputSchema(),
 		"robot-triage": {
@@ -9608,6 +9609,27 @@ func robotSearchOutputSchema() map[string]interface{} {
 			"usage_hints": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 		},
 		"required": []string{"generated_at", "data_hash", "output_format", "version", "query", "provider", "dim", "index_path", "index", "loaded", "limit", "mode", "results"},
+	}
+}
+
+func robotHistoryOutputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Robot History Output",
+		"description": "Bead-to-commit correlation history report with aggregate stats and reverse commit index",
+		"type":        "object",
+		"properties": map[string]interface{}{
+			"generated_at":      map[string]interface{}{"type": "string", "format": "date-time"},
+			"data_hash":         map[string]interface{}{"type": "string"},
+			"output_format":     map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+			"version":           map[string]interface{}{"type": "string"},
+			"git_range":         map[string]interface{}{"type": "string"},
+			"latest_commit_sha": map[string]interface{}{"type": "string"},
+			"stats":             map[string]interface{}{"type": "object"},
+			"histories":         map[string]interface{}{"type": "object"},
+			"commit_index":      map[string]interface{}{"type": "object"},
+		},
+		"required": []string{"generated_at", "data_hash", "output_format", "version", "git_range", "stats", "histories", "commit_index"},
 	}
 }
 
