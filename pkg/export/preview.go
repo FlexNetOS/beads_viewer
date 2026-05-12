@@ -128,12 +128,7 @@ func (p *PreviewServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 
-	// Check if bundle is valid
-	indexPath := filepath.Join(p.bundlePath, "index.html")
-	hasIndex := true
-	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		hasIndex = false
-	}
+	hasIndex := hasValidPreviewIndex(p.bundlePath)
 
 	// Get bundle info
 	var fileCount int
@@ -198,33 +193,62 @@ func validatePreviewBundle(bundlePath string) (http.FileSystem, error) {
 	if bundlePath == "" {
 		return nil, fmt.Errorf("bundle path is required")
 	}
-	if _, err := os.Stat(bundlePath); err != nil {
+	bundleInfo, err := os.Stat(bundlePath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("bundle path does not exist: %s", bundlePath)
 		}
 		return nil, fmt.Errorf("stat bundle path %s: %w", bundlePath, err)
+	}
+	if !bundleInfo.IsDir() {
+		return nil, fmt.Errorf("bundle path is not a directory: %s", bundlePath)
 	}
 
 	previewFS, err := newSafePreviewFileSystem(bundlePath)
 	if err != nil {
 		return nil, err
 	}
-	indexFile, err := previewFS.Open("/index.html")
-	if err != nil {
-		indexPath := filepath.Join(bundlePath, "index.html")
-		if errors.Is(err, iofs.ErrPermission) {
-			return nil, fmt.Errorf("index.html escapes bundle: %s", indexPath)
-		}
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("no index.html found in bundle: %s", bundlePath)
-		}
-		return nil, fmt.Errorf("open bundle index %s: %w", indexPath, err)
-	}
-	if err := indexFile.Close(); err != nil {
-		return nil, fmt.Errorf("close bundle index %s: %w", filepath.Join(bundlePath, "index.html"), err)
+	if err := validatePreviewIndex(previewFS, bundlePath); err != nil {
+		return nil, err
 	}
 
 	return previewFS, nil
+}
+
+func validatePreviewIndex(previewFS http.FileSystem, bundlePath string) error {
+	indexPath := filepath.Join(bundlePath, "index.html")
+	indexFile, err := previewFS.Open("/index.html")
+	if err != nil {
+		if errors.Is(err, iofs.ErrPermission) {
+			return fmt.Errorf("index.html escapes bundle: %s", indexPath)
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("no index.html found in bundle: %s", bundlePath)
+		}
+		return fmt.Errorf("open bundle index %s: %w", indexPath, err)
+	}
+
+	indexInfo, statErr := indexFile.Stat()
+	closeErr := indexFile.Close()
+	if statErr != nil {
+		return fmt.Errorf("stat bundle index %s: %w", indexPath, statErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close bundle index %s: %w", indexPath, closeErr)
+	}
+	if indexInfo.IsDir() {
+		return fmt.Errorf("index.html is a directory in bundle: %s", indexPath)
+	}
+
+	return nil
+}
+
+func hasValidPreviewIndex(bundlePath string) bool {
+	previewFS, err := newSafePreviewFileSystem(bundlePath)
+	if err != nil {
+		return false
+	}
+	return validatePreviewIndex(previewFS, bundlePath) == nil
 }
 
 func (d safePreviewDir) Open(name string) (http.File, error) {

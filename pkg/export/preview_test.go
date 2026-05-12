@@ -221,6 +221,69 @@ func TestValidatePreviewBundle_RejectsEscapedIndexSymlink(t *testing.T) {
 	}
 }
 
+func TestValidatePreviewBundle_RejectsIndexDirectory(t *testing.T) {
+	bundleDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(bundleDir, "index.html"), 0755); err != nil {
+		t.Fatalf("Failed to create index.html directory: %v", err)
+	}
+
+	_, err := validatePreviewBundle(bundleDir)
+	if err == nil {
+		t.Fatal("Expected index.html directory to be rejected")
+	}
+	if !strings.Contains(err.Error(), "index.html is a directory") {
+		t.Fatalf("Expected index directory error, got: %v", err)
+	}
+}
+
+func TestValidatePreviewBundle_RejectsFileBundlePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	bundlePath := filepath.Join(tmpDir, "bundle.html")
+	if err := os.WriteFile(bundlePath, []byte("<html>not a directory</html>"), 0644); err != nil {
+		t.Fatalf("Failed to create bundle file: %v", err)
+	}
+
+	_, err := validatePreviewBundle(bundlePath)
+	if err == nil {
+		t.Fatal("Expected file bundle path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "bundle path is not a directory") {
+		t.Fatalf("Expected non-directory bundle error, got: %v", err)
+	}
+}
+
+func TestPreviewServer_StatusHandler_DoesNotCountEscapedIndexSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	bundleDir := filepath.Join(tmpDir, "bundle")
+	if err := os.Mkdir(bundleDir, 0755); err != nil {
+		t.Fatalf("Failed to create bundle dir: %v", err)
+	}
+
+	outsideIndex := filepath.Join(tmpDir, "index.html")
+	if err := os.WriteFile(outsideIndex, []byte("<html>outside</html>"), 0644); err != nil {
+		t.Fatalf("Failed to create outside index: %v", err)
+	}
+	if err := os.Symlink(outsideIndex, filepath.Join(bundleDir, "index.html")); err != nil {
+		t.Skipf("Symlinks are not available on this platform: %v", err)
+	}
+
+	server := NewPreviewServer(bundleDir, 1234)
+	req := httptest.NewRequest(http.MethodGet, "/__preview__/status", nil)
+	rec := httptest.NewRecorder()
+	server.statusHandler(rec, req)
+
+	type statusResponse struct {
+		HasIndex bool `json:"has_index"`
+	}
+	var got statusResponse
+	if err := json.NewDecoder(io.LimitReader(rec.Body, 1024*1024)).Decode(&got); err != nil {
+		t.Fatalf("Expected valid status JSON, got error: %v", err)
+	}
+	if got.HasIndex {
+		t.Fatal("Expected escaped index.html symlink not to count as a valid index")
+	}
+}
+
 func TestPreviewServer_Integration(t *testing.T) {
 	// Create a temp bundle directory
 	tmpDir := t.TempDir()
