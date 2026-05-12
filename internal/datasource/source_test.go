@@ -661,6 +661,92 @@ func TestFallbackChain_AllFail(t *testing.T) {
 	}
 }
 
+func TestAutoRefreshManager_HandleChangeCallbackCanReadCurrentSource(t *testing.T) {
+	source := createValidJSONLSource(t)
+	manager := &AutoRefreshManager{
+		currentSource: &DataSource{
+			Type:    source.Type,
+			Path:    source.Path,
+			ModTime: source.ModTime.Add(-time.Minute),
+			Valid:   true,
+		},
+		sources: []DataSource{source},
+		opts:    DefaultSelectionOptions(),
+	}
+
+	done := make(chan struct{})
+	manager.onSourceChange = func(newSource DataSource, reason string) {
+		_ = manager.CurrentSource()
+		close(done)
+	}
+
+	go manager.handleChange(source)
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("handleChange callback deadlocked while reading CurrentSource")
+	}
+}
+
+func TestAutoRefreshManager_ForceRefreshCallbackCanReadCurrentSource(t *testing.T) {
+	source := createValidJSONLSource(t)
+	manager := &AutoRefreshManager{
+		sources: []DataSource{source},
+		opts:    DefaultSelectionOptions(),
+	}
+
+	done := make(chan struct{})
+	manager.onSourceChange = func(newSource DataSource, reason string) {
+		_ = manager.CurrentSource()
+		close(done)
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- manager.ForceRefresh()
+	}()
+
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("ForceRefresh failed: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ForceRefresh deadlocked while invoking source change callback")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ForceRefresh returned without invoking source change callback")
+	}
+}
+
+func createValidJSONLSource(t *testing.T) DataSource {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	jsonlPath := filepath.Join(tmpDir, "issues.jsonl")
+	content := `{"id":"TEST-1","title":"Test Issue","status":"open"}` + "\n"
+	if err := os.WriteFile(jsonlPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write JSONL source: %v", err)
+	}
+	info, err := os.Stat(jsonlPath)
+	if err != nil {
+		t.Fatalf("stat JSONL source: %v", err)
+	}
+
+	return DataSource{
+		Type:     SourceTypeJSONLLocal,
+		Path:     jsonlPath,
+		Priority: PriorityJSONLLocal,
+		ModTime:  info.ModTime(),
+		Valid:    true,
+		Size:     info.Size(),
+	}
+}
+
 // Helper to create a test SQLite database with sample data
 func createTestSQLiteDB(t *testing.T, path string) {
 	db, err := sql.Open("sqlite", path)
