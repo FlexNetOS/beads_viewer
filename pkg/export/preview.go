@@ -86,7 +86,7 @@ func (p *PreviewServer) StartWithGracefulShutdown() error {
 
 	// Start server in goroutine
 	go func() {
-		if err := p.Start(); err != nil && err != http.ErrServerClosed {
+		if err := p.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errChan <- err
 		}
 	}()
@@ -253,7 +253,18 @@ func hasValidPreviewIndex(bundlePath string) bool {
 
 func (d safePreviewDir) Open(name string) (http.File, error) {
 	rel := strings.TrimPrefix(path.Clean("/"+name), "/")
-	fullPath := filepath.Join(d.root, filepath.FromSlash(rel))
+	if rel == "" {
+		rel = "."
+	}
+	if !iofs.ValidPath(rel) {
+		return nil, iofs.ErrPermission
+	}
+	localRel, err := filepath.Localize(rel)
+	if err != nil {
+		return nil, iofs.ErrPermission
+	}
+
+	fullPath := filepath.Join(d.root, localRel)
 	if !pathWithinRoot(d.root, fullPath) {
 		return nil, iofs.ErrPermission
 	}
@@ -430,7 +441,7 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 
 	// Start server in goroutine
 	go func() {
-		if err := server.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errChan <- err
 		}
 	}()

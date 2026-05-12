@@ -2,8 +2,10 @@ package export
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -197,6 +199,30 @@ func TestPreviewFileServer_RejectsEscapedSymlink(t *testing.T) {
 	}
 }
 
+func TestSafePreviewDir_RejectsBackslashTraversalOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("backslash path traversal is Windows-specific")
+	}
+
+	bundleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bundleDir, "index.html"), []byte("<html>ok</html>"), 0644); err != nil {
+		t.Fatalf("Failed to create index.html: %v", err)
+	}
+
+	previewFS, err := newSafePreviewFileSystem(bundleDir)
+	if err != nil {
+		t.Fatalf("Failed to create preview filesystem: %v", err)
+	}
+	file, err := previewFS.Open(`/..\secret.txt`)
+	if err == nil {
+		file.Close()
+		t.Fatal("Expected Windows backslash traversal path to be rejected")
+	}
+	if !errors.Is(err, iofs.ErrPermission) {
+		t.Fatalf("Expected permission error for backslash traversal, got: %v", err)
+	}
+}
+
 func TestValidatePreviewBundle_RejectsEscapedIndexSymlink(t *testing.T) {
 	tmpDir := t.TempDir()
 	bundleDir := filepath.Join(tmpDir, "bundle")
@@ -314,7 +340,7 @@ func TestPreviewServer_Integration(t *testing.T) {
 	// Start server in goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		if err := server.Start(); err != nil && err != http.ErrServerClosed {
+		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errChan <- err
 		}
 	}()
