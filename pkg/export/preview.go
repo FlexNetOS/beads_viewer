@@ -8,10 +8,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	iofs "io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -50,8 +52,11 @@ func (p *PreviewServer) Start() error {
 	mux := http.NewServeMux()
 
 	// Static file server with no-cache middleware
-	fs := http.FileServer(http.Dir(p.bundlePath))
-	mux.Handle("/", noCacheMiddleware(fs))
+	previewFS, err := newSafePreviewFileSystem(p.bundlePath)
+	if err != nil {
+		return err
+	}
+	mux.Handle("/", noCacheMiddleware(http.FileServer(previewFS)))
 
 	// Status endpoint
 	mux.HandleFunc("/__preview__/status", p.statusHandler)
@@ -182,6 +187,48 @@ func noCacheMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+type safePreviewDir struct {
+	root string
+}
+
+func newSafePreviewFileSystem(bundlePath string) (http.FileSystem, error) {
+	root, err := filepath.Abs(bundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve bundle path: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve bundle symlinks: %w", err)
+	}
+	return safePreviewDir{root: root}, nil
+}
+
+func (d safePreviewDir) Open(name string) (http.File, error) {
+	rel := strings.TrimPrefix(path.Clean("/"+name), "/")
+	fullPath := filepath.Join(d.root, filepath.FromSlash(rel))
+	if !pathWithinRoot(d.root, fullPath) {
+		return nil, iofs.ErrPermission
+	}
+
+	resolvedPath, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	if !pathWithinRoot(d.root, resolvedPath) {
+		return nil, iofs.ErrPermission
+	}
+
+	return os.Open(resolvedPath)
+}
+
+func pathWithinRoot(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel))
+}
+
 // FindAvailablePort finds an available port in the given range.
 func FindAvailablePort(start, end int) (int, error) {
 	for port := start; port <= end; port++ {
@@ -271,7 +318,11 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 
 	// Need to initialize the server first
 	mux := http.NewServeMux()
-	fs := http.FileServer(http.Dir(config.BundlePath))
+	previewFS, err := newSafePreviewFileSystem(config.BundlePath)
+	if err != nil {
+		return err
+	}
+	fileServer := http.FileServer(previewFS)
 
 	// Set up live-reload if enabled
 	var liveReloadHub *LiveReloadHub
@@ -292,14 +343,14 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 				// Add SSE endpoint for live-reload
 				mux.HandleFunc("/__preview__/events", liveReloadHub.SSEHandler())
 				// Wrap file server with live-reload script injection
-				mux.Handle("/", liveReloadMiddleware(noCacheMiddleware(fs)))
+				mux.Handle("/", liveReloadMiddleware(noCacheMiddleware(fileServer)))
 			}
 		}
 	}
 
 	// If no live-reload, just use no-cache middleware
 	if liveReloadHub == nil {
-		mux.Handle("/", noCacheMiddleware(fs))
+		mux.Handle("/", noCacheMiddleware(fileServer))
 	}
 
 	mux.HandleFunc("/__preview__/status", server.statusHandler)

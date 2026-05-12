@@ -154,6 +154,49 @@ func TestStartPreviewWithConfig_MissingIndexReturnsError(t *testing.T) {
 	}
 }
 
+func TestPreviewFileServer_RejectsEscapedSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	bundleDir := filepath.Join(tmpDir, "bundle")
+	if err := os.Mkdir(bundleDir, 0755); err != nil {
+		t.Fatalf("Failed to create bundle dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bundleDir, "index.html"), []byte("<html>ok</html>"), 0644); err != nil {
+		t.Fatalf("Failed to create index.html: %v", err)
+	}
+
+	secretPath := filepath.Join(tmpDir, "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("do not serve"), 0644); err != nil {
+		t.Fatalf("Failed to create secret file: %v", err)
+	}
+	if err := os.Symlink(secretPath, filepath.Join(bundleDir, "leak.txt")); err != nil {
+		t.Skipf("Symlinks are not available on this platform: %v", err)
+	}
+
+	previewFS, err := newSafePreviewFileSystem(bundleDir)
+	if err != nil {
+		t.Fatalf("Failed to create preview filesystem: %v", err)
+	}
+	server := httptest.NewServer(noCacheMiddleware(http.FileServer(previewFS)))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/leak.txt")
+	if err != nil {
+		t.Fatalf("Failed to request escaped symlink: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		t.Fatalf("Failed to read response body: %v", err)
+	}
+	if resp.StatusCode == http.StatusOK || strings.Contains(string(body), "do not serve") {
+		t.Fatalf("Preview server served a symlink outside the bundle: status=%d body=%q", resp.StatusCode, string(body))
+	}
+	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("Expected escaped symlink to be forbidden or hidden, got status %d body %q", resp.StatusCode, string(body))
+	}
+}
+
 func TestPreviewServer_Integration(t *testing.T) {
 	// Create a temp bundle directory
 	tmpDir := t.TempDir()
