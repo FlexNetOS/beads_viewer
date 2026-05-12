@@ -872,6 +872,98 @@ func TestRobotCorrelationStatsOutputIncludesEnvelope(t *testing.T) {
 	}
 }
 
+func TestRobotOrphansSchemaMatchesHandlerOutput(t *testing.T) {
+	schemas := generateRobotSchemas()
+	properties := requireRobotSchemaProperties(t, schemas, "robot-orphans")
+	for _, name := range []string{
+		"generated_at", "data_hash", "output_format", "version",
+		"git_range", "stats", "candidates", "by_bead",
+	} {
+		if properties[name] == nil {
+			t.Fatalf("robot-orphans schema missing top-level property %q", name)
+		}
+	}
+
+	statsProps := requireNestedSchemaProperties(t, properties["stats"], "robot-orphans stats")
+	for _, name := range []string{
+		"total_commits", "correlated_count", "orphan_count",
+		"candidate_count", "orphan_ratio", "avg_suspicion_score",
+	} {
+		if statsProps[name] == nil {
+			t.Fatalf("robot-orphans stats schema missing %q", name)
+		}
+	}
+
+	candidatesProp, ok := properties["candidates"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-orphans candidates has unexpected type %T", properties["candidates"])
+	}
+	candidateTypes, ok := candidatesProp["type"].([]string)
+	if ok {
+		t.Fatalf("robot-orphans candidates should not be nullable: %#v", candidateTypes)
+	}
+	candidateType, ok := candidatesProp["type"].(string)
+	if !ok {
+		t.Fatalf("robot-orphans candidates type has unexpected type %T", candidatesProp["type"])
+	}
+	requireString(t, candidateType, "array")
+
+	candidateProps := requireNestedSchemaProperties(t, candidatesProp["items"], "robot-orphans candidate")
+	for _, name := range []string{
+		"sha", "short_sha", "message", "author", "author_email", "timestamp",
+		"files", "suspicion_score", "probable_beads", "signals",
+	} {
+		if candidateProps[name] == nil {
+			t.Fatalf("robot-orphans candidate schema missing %q", name)
+		}
+	}
+
+	probableBeadsProp, ok := candidateProps["probable_beads"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-orphans probable_beads has unexpected type %T", candidateProps["probable_beads"])
+	}
+	probableBeadProps := requireNestedSchemaProperties(t, probableBeadsProp["items"], "robot-orphans probable bead")
+	for _, name := range []string{"bead_id", "bead_title", "bead_status", "confidence", "reasons"} {
+		if probableBeadProps[name] == nil {
+			t.Fatalf("robot-orphans probable bead schema missing %q", name)
+		}
+	}
+
+	signalsProp, ok := candidateProps["signals"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-orphans signals has unexpected type %T", candidateProps["signals"])
+	}
+	signalProps := requireNestedSchemaProperties(t, signalsProp["items"], "robot-orphans signal")
+	for _, name := range []string{"signal", "details", "weight"} {
+		if signalProps[name] == nil {
+			t.Fatalf("robot-orphans signal schema missing %q", name)
+		}
+	}
+
+	byBeadProp, ok := properties["by_bead"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-orphans by_bead has unexpected type %T", properties["by_bead"])
+	}
+	byBeadValues, ok := byBeadProp["additionalProperties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-orphans by_bead values have unexpected type %T", byBeadProp["additionalProperties"])
+	}
+	byBeadTypes, ok := byBeadValues["type"].([]string)
+	if ok {
+		t.Fatalf("robot-orphans by_bead values should not be nullable: %#v", byBeadTypes)
+	}
+	byBeadType, ok := byBeadValues["type"].(string)
+	if !ok {
+		t.Fatalf("robot-orphans by_bead value type has unexpected type %T", byBeadValues["type"])
+	}
+	requireString(t, byBeadType, "array")
+
+	docs := robotCommandDocs()
+	requireContainsString(t, docs["robot-orphans"].KeyFields, "stats.candidate_count")
+	requireContainsString(t, docs["robot-orphans"].KeyFields, "candidates[].probable_beads")
+	requireContainsString(t, docs["robot-orphans"].KeyFields, "by_bead")
+}
+
 func TestRobotFileWorkflowSchemasMatchHandlerOutputs(t *testing.T) {
 	schemas := generateRobotSchemas()
 	tests := []struct {

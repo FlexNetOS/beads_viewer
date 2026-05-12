@@ -8199,6 +8199,7 @@ func robotCommandDocs() map[string]robotCommandDoc {
 		},
 		"robot-orphans": {
 			Flag: "--robot-orphans", Description: "Orphan commit candidates that should be linked to beads.",
+			KeyFields:   []string{"git_range", "stats.candidate_count", "candidates", "candidates[].probable_beads", "by_bead"},
 			Params:      []string{"--orphans-min-score 0-100"},
 			NeedsIssues: true,
 			NeedsGit:    true,
@@ -8959,6 +8960,7 @@ func generateRobotSchemas() RobotSchemas {
 		"robot-file-hotspots":     robotFileHotspotsOutputSchema(),
 		"robot-file-relations":    robotFileRelationsOutputSchema(),
 		"robot-impact":            robotImpactOutputSchema(),
+		"robot-orphans":           robotOrphansOutputSchema(),
 		"robot-metrics": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
 			"title":       "Robot Metrics Output",
@@ -9654,6 +9656,88 @@ func robotCorrelationStatsOutputSchema() map[string]interface{} {
 		"required": []string{
 			"generated_at", "output_format", "version", "total_feedback", "confirmed",
 			"rejected", "ignored", "accuracy_rate", "avg_confirm_conf", "avg_reject_conf",
+		},
+	}
+}
+
+func robotOrphansOutputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"$schema":     "https://json-schema.org/draft/2020-12/schema",
+		"title":       "Robot Orphans Output",
+		"description": "Orphan commit candidates that should be linked to beads",
+		"type":        "object",
+		"properties": map[string]interface{}{
+			"generated_at":  map[string]interface{}{"type": "string", "format": "date-time"},
+			"data_hash":     map[string]interface{}{"type": "string"},
+			"output_format": map[string]interface{}{"type": "string", "enum": []string{"json", "toon"}},
+			"version":       map[string]interface{}{"type": "string"},
+			"git_range":     map[string]interface{}{"type": "string"},
+			"stats":         robotOrphanStatsSchema(),
+			"candidates":    map[string]interface{}{"type": "array", "items": robotOrphanCandidateSchema()},
+			"by_bead": map[string]interface{}{
+				"type": "object",
+				"additionalProperties": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		"required": []string{"generated_at", "data_hash", "output_format", "version", "git_range", "stats", "candidates"},
+	}
+}
+
+func robotOrphanStatsSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"total_commits":       map[string]interface{}{"type": "integer"},
+			"correlated_count":    map[string]interface{}{"type": "integer"},
+			"orphan_count":        map[string]interface{}{"type": "integer"},
+			"candidate_count":     map[string]interface{}{"type": "integer"},
+			"orphan_ratio":        map[string]interface{}{"type": "number"},
+			"avg_suspicion_score": map[string]interface{}{"type": "number"},
+		},
+	}
+}
+
+func robotOrphanCandidateSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"sha":             map[string]interface{}{"type": "string"},
+			"short_sha":       map[string]interface{}{"type": "string"},
+			"message":         map[string]interface{}{"type": "string"},
+			"author":          map[string]interface{}{"type": "string"},
+			"author_email":    map[string]interface{}{"type": "string"},
+			"timestamp":       map[string]interface{}{"type": "string", "format": "date-time"},
+			"files":           robotNullableArraySchema(map[string]interface{}{"type": "string"}),
+			"suspicion_score": map[string]interface{}{"type": "integer"},
+			"probable_beads":  map[string]interface{}{"type": "array", "items": robotProbableBeadSchema()},
+			"signals":         map[string]interface{}{"type": "array", "items": robotOrphanSignalSchema()},
+		},
+	}
+}
+
+func robotProbableBeadSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"bead_id":     map[string]interface{}{"type": "string"},
+			"bead_title":  map[string]interface{}{"type": "string"},
+			"bead_status": map[string]interface{}{"type": "string"},
+			"confidence":  map[string]interface{}{"type": "integer"},
+			"reasons":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+		},
+	}
+}
+
+func robotOrphanSignalSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"signal":  map[string]interface{}{"type": "string"},
+			"details": map[string]interface{}{"type": "string"},
+			"weight":  map[string]interface{}{"type": "integer"},
 		},
 	}
 }
