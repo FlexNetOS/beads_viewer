@@ -158,6 +158,7 @@ func (w *Watcher) Start() error {
 	}
 
 	w.ctx, w.cancel = newRunContext()
+	runCtx := w.ctx
 
 	// Try to use fsnotify
 	if !forcePoll && !w.useFallback {
@@ -171,7 +172,7 @@ func (w *Watcher) Start() error {
 			} else {
 				w.fsWatcher = fsw
 				w.useFallback = false
-				go w.watchFsnotify()
+				go w.watchFsnotify(runCtx)
 			}
 		} else {
 			w.useFallback = true
@@ -182,7 +183,7 @@ func (w *Watcher) Start() error {
 
 	// Start polling as fallback or primary
 	if w.useFallback {
-		go w.watchPolling()
+		go w.watchPolling(runCtx)
 	}
 
 	w.started = true
@@ -273,7 +274,7 @@ func newRunContext() (context.Context, context.CancelFunc) {
 }
 
 // watchFsnotify monitors using fsnotify events.
-func (w *Watcher) watchFsnotify() {
+func (w *Watcher) watchFsnotify(ctx context.Context) {
 	targetFile := filepath.Base(w.path)
 
 	// Capture channel references to avoid race with Stop() setting fsWatcher to nil
@@ -288,7 +289,7 @@ func (w *Watcher) watchFsnotify() {
 
 	for {
 		select {
-		case <-w.ctx.Done():
+		case <-ctx.Done():
 			return
 
 		case event, ok := <-events:
@@ -343,13 +344,13 @@ func (w *Watcher) handleFsnotifyFileEvent(op fsnotify.Op) {
 }
 
 // watchPolling monitors using periodic stat checks.
-func (w *Watcher) watchPolling() {
+func (w *Watcher) watchPolling(ctx context.Context) {
 	ticker := time.NewTicker(w.pollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-w.ctx.Done():
+		case <-ctx.Done():
 			return
 
 		case <-ticker.C:

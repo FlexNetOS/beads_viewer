@@ -470,6 +470,54 @@ func TestWatcher_StartStop(t *testing.T) {
 	w.Stop()
 }
 
+func TestWatcher_RestartPollingUsesPerRunContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.jsonl")
+
+	if err := os.WriteFile(tmpFile, []byte("initial"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var changes atomic.Int32
+	w, err := NewWatcher(tmpFile,
+		WithDebounceDuration(time.Millisecond),
+		WithPollInterval(time.Millisecond),
+		WithForcePoll(true),
+		WithOnChange(func() {
+			changes.Add(1)
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 20; i++ {
+		if err := w.Start(); err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+		time.Sleep(2 * time.Millisecond)
+		w.Stop()
+	}
+
+	if err := w.Start(); err != nil {
+		t.Fatalf("final start: %v", err)
+	}
+	defer w.Stop()
+
+	if err := os.WriteFile(tmpFile, []byte("after restart"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(500 * time.Millisecond)
+	for changes.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for change after watcher restart")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 func TestWatcher_Path(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "test.jsonl")
