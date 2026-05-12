@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Dicklesworthstone/beads_viewer/pkg/loader"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/recipe"
 	flag "github.com/spf13/pflag"
@@ -232,6 +233,20 @@ func TestUnknownFlagErrorSuggestsNearestFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveSingleRepoWatchFile_RespectsExplicitBeadsDBFile(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "selected.db")
+	if err := os.WriteFile(dbPath, []byte("placeholder"), 0644); err != nil {
+		t.Fatalf("write selected db: %v", err)
+	}
+	t.Setenv(loader.BeadsDBEnvVar, dbPath)
+
+	got, err := resolveSingleRepoWatchFile(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveSingleRepoWatchFile: %v", err)
+	}
+	requireString(t, got, dbPath)
 }
 
 func TestUnknownCommandErrorSuggestsNearestCommand(t *testing.T) {

@@ -8499,6 +8499,12 @@ func robotFlagExampleForm(flag string) string {
 }
 
 func resolveSingleRepoWatchFile(projectDir string) (string, error) {
+	if source, ok, err := datasource.ExplicitBeadsDBSource(); err != nil {
+		return "", err
+	} else if ok {
+		return source.Path, nil
+	}
+
 	beadsDir, err := loader.GetBeadsDir(projectDir)
 	if err != nil {
 		return "", fmt.Errorf("getting beads directory: %w", err)

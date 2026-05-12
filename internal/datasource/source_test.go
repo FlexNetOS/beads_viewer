@@ -8,6 +8,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/Dicklesworthstone/beads_viewer/pkg/loader"
 )
 
 // TestDiscoverSources_OnlySQLite tests discovery with only a SQLite source
@@ -158,6 +160,81 @@ func TestDiscoverSources_Empty(t *testing.T) {
 
 	if len(sources) != 0 {
 		t.Errorf("Expected 0 sources, got %d", len(sources))
+	}
+}
+
+func TestDiscoverSources_RespectsBeadsDBSpecificFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	jsonlPath := filepath.Join(beadsDir, "selected.jsonl")
+	content := `{"id":"JSONL-1","title":"Selected JSONL","status":"open","issue_type":"task"}` + "\n"
+	if err := os.WriteFile(jsonlPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	createTestSQLiteDB(t, filepath.Join(beadsDir, "beads.db"))
+	t.Setenv(loader.BeadsDBEnvVar, jsonlPath)
+
+	sources, err := DiscoverSources(DiscoveryOptions{ValidateAfterDiscovery: true})
+	if err != nil {
+		t.Fatalf("DiscoverSources: %v", err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("expected exactly the explicit source, got %#v", sources)
+	}
+	if sources[0].Path != jsonlPath || sources[0].Type != SourceTypeJSONLLocal {
+		t.Fatalf("expected explicit JSONL source, got %#v", sources[0])
+	}
+}
+
+func TestLoadIssues_RespectsBeadsDBSpecificJSONL(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	jsonlPath := filepath.Join(beadsDir, "selected.jsonl")
+	content := `{"id":"JSONL-1","title":"Selected JSONL","status":"open","issue_type":"task"}` + "\n"
+	if err := os.WriteFile(jsonlPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	createTestSQLiteDB(t, filepath.Join(beadsDir, "beads.db"))
+	t.Setenv(loader.BeadsDBEnvVar, jsonlPath)
+
+	issues, err := LoadIssues(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ID != "JSONL-1" {
+		t.Fatalf("expected explicit JSONL source, got %#v", issues)
+	}
+}
+
+func TestLoadIssues_RespectsBeadsDBSpecificSQLite(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	jsonlPath := filepath.Join(beadsDir, "beads.jsonl")
+	if err := os.WriteFile(jsonlPath, []byte(`{"id":"JSONL-1","title":"Default JSONL","status":"open","issue_type":"task"}`+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(beadsDir, "selected.db")
+	createSingleIssueSQLiteDB(t, dbPath, "SQLITE-1")
+	t.Setenv(loader.BeadsDBEnvVar, dbPath)
+
+	issues, err := LoadIssues(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ID != "SQLITE-1" {
+		t.Fatalf("expected explicit SQLite source, got %#v", issues)
 	}
 }
 
@@ -744,6 +821,32 @@ func createValidJSONLSource(t *testing.T) DataSource {
 		ModTime:  info.ModTime(),
 		Valid:    true,
 		Size:     info.Size(),
+	}
+}
+
+func createSingleIssueSQLiteDB(t *testing.T, path, id string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE issues (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = db.Exec(`INSERT INTO issues (id, title, status) VALUES (?, 'Selected SQLite', 'open')`, id)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
