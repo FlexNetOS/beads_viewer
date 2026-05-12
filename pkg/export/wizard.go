@@ -6,8 +6,10 @@ package export
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -676,8 +678,12 @@ func (w *Wizard) OfferPreview() (string, error) {
 
 	fmt.Println("")
 	fmt.Printf("Starting preview server for %s...\n", w.bundlePath)
-	fmt.Println("Press Ctrl+C in the browser tab when done, then return here.")
+	fmt.Println("Use the prompt below when done previewing.")
 	fmt.Println("")
+
+	if _, err := validatePreviewBundle(w.bundlePath); err != nil {
+		return "", fmt.Errorf("preview bundle is not valid: %w", err)
+	}
 
 	// Start preview server
 	port, err := FindAvailablePort(PreviewPortRangeStart, PreviewPortRangeEnd)
@@ -687,17 +693,19 @@ func (w *Wizard) OfferPreview() (string, error) {
 
 	server := NewPreviewServer(w.bundlePath, port)
 
-	// Open browser
+	// Start server in goroutine
+	errChan := make(chan error, 1)
 	go func() {
-		time.Sleep(500 * time.Millisecond)
-		url := server.URL()
-		OpenInBrowser(url)
+		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errChan <- err
+		}
 	}()
 
-	// Start server in goroutine
-	go func() {
-		server.Start()
-	}()
+	select {
+	case err := <-errChan:
+		return "", fmt.Errorf("start preview server: %w", err)
+	case <-time.After(100 * time.Millisecond):
+	}
 
 	// Wait for user to press enter with a simple huh form
 	var cont bool = true // Default to continue after preview
