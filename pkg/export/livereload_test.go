@@ -44,6 +44,24 @@ func TestLiveReloadHub_StartStop(t *testing.T) {
 	hub.Stop()
 }
 
+func TestLiveReloadHub_StopAfterStartFailure(t *testing.T) {
+	missingDir := filepath.Join(t.TempDir(), "missing")
+
+	hub, err := NewLiveReloadHub(missingDir)
+	if err != nil {
+		t.Fatalf("NewLiveReloadHub() error = %v", err)
+	}
+
+	if err := hub.Start(); err == nil {
+		hub.Stop()
+		t.Fatal("Expected Start() to fail for missing bundle path")
+	}
+
+	// The preview setup path calls Stop after a failed Start to close the
+	// watcher allocated by NewLiveReloadHub. This must remain safe.
+	hub.Stop()
+}
+
 func TestLiveReloadHub_ClientCount(t *testing.T) {
 	dir := t.TempDir()
 

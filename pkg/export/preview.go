@@ -384,6 +384,7 @@ func StartPreviewWithConfig(config PreviewConfig) error {
 				if !config.Quiet {
 					fmt.Printf("Warning: Could not start live-reload: %v\n", err)
 				}
+				liveReloadHub.Stop()
 				liveReloadHub = nil
 			} else {
 				// Add SSE endpoint for live-reload
