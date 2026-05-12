@@ -302,15 +302,7 @@ func (w *Watcher) watchFsnotify() {
 				continue
 			}
 
-			switch {
-			case event.Op&fsnotify.Remove != 0:
-				if w.recordMissing() {
-					w.onError(ErrFileRemoved)
-				}
-
-			case event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0:
-				w.debouncer.Trigger(w.notifyChange)
-			}
+			w.handleFsnotifyFileEvent(event.Op)
 
 		case err, ok := <-errors:
 			if !ok {
@@ -319,6 +311,35 @@ func (w *Watcher) watchFsnotify() {
 			w.onError(err)
 		}
 	}
+}
+
+func (w *Watcher) handleFsnotifyFileEvent(op fsnotify.Op) {
+	if op&fsnotify.Remove != 0 {
+		if w.recordMissing() {
+			w.onError(ErrFileRemoved)
+		}
+		return
+	}
+	if op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+		return
+	}
+
+	info, err := os.Stat(w.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if op&fsnotify.Rename != 0 && w.recordMissing() {
+				w.onError(ErrFileRemoved)
+			}
+		} else if os.IsPermission(err) {
+			w.onError(ErrPermission)
+		} else {
+			w.onError(err)
+		}
+		return
+	}
+
+	w.recordStat(info.ModTime(), info.Size())
+	w.debouncer.Trigger(w.notifyChange)
 }
 
 // watchPolling monitors using periodic stat checks.

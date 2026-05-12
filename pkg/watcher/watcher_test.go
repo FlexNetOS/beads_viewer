@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestDebouncer_CoalescesRapidTriggers(t *testing.T) {
@@ -392,6 +394,39 @@ func TestWatcher_PollingDetectsBackwardMtimeChangeSameSize(t *testing.T) {
 	case <-w.Changed():
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timeout waiting for same-size backward-mtime change")
+	}
+}
+
+func TestWatcher_FsnotifyCreateRefreshesRemovedState(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test.jsonl")
+
+	if err := os.WriteFile(tmpFile, []byte("initial"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := NewWatcher(tmpFile, WithDebounceDuration(5*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.debouncer.Cancel()
+
+	info, err := os.Stat(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.recordStat(info.ModTime(), info.Size())
+	if !w.recordMissing() {
+		t.Fatal("initial removal should report that the file existed")
+	}
+
+	if err := os.WriteFile(tmpFile, []byte("recreated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	w.handleFsnotifyFileEvent(fsnotify.Create)
+
+	if !w.recordMissing() {
+		t.Fatal("recreated file should be tracked as present before the next removal")
 	}
 }
 
