@@ -1057,6 +1057,114 @@ func TestRobotFileWorkflowDocsExposeLiveJSONPaths(t *testing.T) {
 	}
 }
 
+func TestRobotRelationshipWorkflowSchemasMatchHandlerOutputs(t *testing.T) {
+	schemas := generateRobotSchemas()
+
+	relatedProps := requireRobotSchemaProperties(t, schemas, "robot-related")
+	for _, name := range []string{
+		"generated_at", "data_hash", "output_format", "version",
+		"target_bead_id", "target_title", "file_overlap", "commit_overlap",
+		"dependency_cluster", "concurrent", "total_related",
+	} {
+		if relatedProps[name] == nil {
+			t.Fatalf("robot-related schema missing top-level property %q", name)
+		}
+	}
+	fileOverlapProp, ok := relatedProps["file_overlap"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-related file_overlap has unexpected type %T", relatedProps["file_overlap"])
+	}
+	relatedItemProps := requireNestedSchemaProperties(t, fileOverlapProp["items"], "robot-related item")
+	for _, name := range []string{"bead_id", "title", "status", "relation_type", "relevance", "reason", "shared_files", "shared_commits"} {
+		if relatedItemProps[name] == nil {
+			t.Fatalf("robot-related item schema missing %q", name)
+		}
+	}
+
+	blockerProps := requireRobotSchemaProperties(t, schemas, "robot-blocker-chain")
+	for _, name := range []string{"generated_at", "data_hash", "output_format", "version", "result"} {
+		if blockerProps[name] == nil {
+			t.Fatalf("robot-blocker-chain schema missing top-level property %q", name)
+		}
+	}
+	blockerResultProps := requireNestedSchemaProperties(t, blockerProps["result"], "robot-blocker-chain result")
+	for _, name := range []string{"target_id", "target_title", "is_blocked", "chain_length", "root_blockers", "chain", "has_cycle", "cycle_ids"} {
+		if blockerResultProps[name] == nil {
+			t.Fatalf("robot-blocker-chain result schema missing %q", name)
+		}
+	}
+	chainProp, ok := blockerResultProps["chain"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-blocker-chain chain has unexpected type %T", blockerResultProps["chain"])
+	}
+	blockerEntryProps := requireNestedSchemaProperties(t, chainProp["items"], "robot-blocker-chain entry")
+	for _, name := range []string{"id", "title", "status", "priority", "depth", "is_root", "actionable", "blocks_count"} {
+		if blockerEntryProps[name] == nil {
+			t.Fatalf("robot-blocker-chain entry schema missing %q", name)
+		}
+	}
+
+	networkProps := requireRobotSchemaProperties(t, schemas, "robot-impact-network")
+	for _, name := range []string{
+		"generated_at", "data_hash", "output_format", "version",
+		"bead_id", "depth", "network", "stats", "top_clusters", "top_connected",
+	} {
+		if networkProps[name] == nil {
+			t.Fatalf("robot-impact-network schema missing top-level property %q", name)
+		}
+	}
+	networkStatsProps := requireNestedSchemaProperties(t, networkProps["stats"], "robot-impact-network stats")
+	for _, name := range []string{"total_nodes", "total_edges", "cluster_count", "avg_degree", "max_degree", "density", "isolated_nodes", "largest_cluster"} {
+		if networkStatsProps[name] == nil {
+			t.Fatalf("robot-impact-network stats schema missing %q", name)
+		}
+	}
+	topConnectedProp, ok := networkProps["top_connected"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("robot-impact-network top_connected has unexpected type %T", networkProps["top_connected"])
+	}
+	nodeProps := requireNestedSchemaProperties(t, topConnectedProp["items"], "robot-impact-network node")
+	for _, name := range []string{"bead_id", "title", "status", "priority", "last_activity", "degree", "cluster_id", "commit_count", "file_count", "connectivity"} {
+		if nodeProps[name] == nil {
+			t.Fatalf("robot-impact-network node schema missing %q", name)
+		}
+	}
+
+	causalityProps := requireRobotSchemaProperties(t, schemas, "robot-causality")
+	for _, name := range []string{"generated_at", "data_hash", "output_format", "version", "chain", "insights"} {
+		if causalityProps[name] == nil {
+			t.Fatalf("robot-causality schema missing top-level property %q", name)
+		}
+	}
+	causalChainProps := requireNestedSchemaProperties(t, causalityProps["chain"], "robot-causality chain")
+	for _, name := range []string{"bead_id", "title", "status", "events", "edge_count", "start_time", "end_time", "total_time", "is_complete"} {
+		if causalChainProps[name] == nil {
+			t.Fatalf("robot-causality chain schema missing %q", name)
+		}
+	}
+	causalInsightsProps := requireNestedSchemaProperties(t, causalityProps["insights"], "robot-causality insights")
+	for _, name := range []string{"total_duration", "blocked_duration", "active_duration", "blocked_percentage", "blocked_periods", "critical_path", "summary", "recommendations"} {
+		if causalInsightsProps[name] == nil {
+			t.Fatalf("robot-causality insights schema missing %q", name)
+		}
+	}
+}
+
+func TestRobotRelationshipWorkflowDocsExposeLiveJSONPaths(t *testing.T) {
+	docs := robotCommandDocs()
+	expectations := map[string][]string{
+		"robot-related":        {"target_bead_id", "total_related", "file_overlap"},
+		"robot-blocker-chain":  {"result.target_id", "result.root_blockers", "result.chain"},
+		"robot-impact-network": {"network.nodes", "stats.total_nodes", "top_connected"},
+		"robot-causality":      {"chain.events", "insights.summary", "insights.recommendations"},
+	}
+	for command, fields := range expectations {
+		for _, field := range fields {
+			requireContainsString(t, docs[command].KeyFields, field)
+		}
+	}
+}
+
 func TestRobotGroupedTriageSchemasMatchHandlerOutput(t *testing.T) {
 	schemas := generateRobotSchemas()
 	for _, tc := range []struct {

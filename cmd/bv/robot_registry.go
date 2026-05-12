@@ -2525,6 +2525,12 @@ func handleRobotImpactNetwork(ctx RobotContext, cfg phaseThreeRobotHandlerConfig
 	if *cfg.RobotImpactNetworkFlag != "all" {
 		beadID = *cfg.RobotImpactNetworkFlag
 	}
+	if beadID != "" {
+		if _, ok := network.Nodes[beadID]; !ok {
+			fmt.Fprintf(ctx.StderrOrDefault(), "Bead not found in network: %s\n", beadID)
+			return newReportedRobotHandlerExit(1)
+		}
+	}
 	depth := 1
 	if cfg.NetworkDepth != nil {
 		depth = *cfg.NetworkDepth

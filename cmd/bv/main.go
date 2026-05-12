@@ -4748,6 +4748,12 @@ func main() {
 			if *robotImpactNetwork != "all" {
 				beadID = *robotImpactNetwork
 			}
+			if beadID != "" {
+				if _, ok := network.Nodes[beadID]; !ok {
+					fmt.Fprintf(os.Stderr, "Bead not found in network: %s\n", beadID)
+					os.Exit(1)
+				}
+			}
 
 			// Cap depth to reasonable range
 			depth := *networkDepth
@@ -8210,6 +8216,7 @@ func robotCommandDocs() map[string]robotCommandDoc {
 		},
 		"robot-related": {
 			Flag: "--robot-related <id>", Description: "Beads related to a specific bead ID.",
+			KeyFields:   []string{"target_bead_id", "total_related", "file_overlap", "commit_overlap", "dependency_cluster", "concurrent"},
 			Params:      []string{"--related-min-relevance 0-100 or 0.0-1.0", "--related-max-results <n>", "--related-include-closed"},
 			NeedsIssues: true,
 			NeedsGit:    true,
@@ -8217,10 +8224,12 @@ func robotCommandDocs() map[string]robotCommandDoc {
 		"robot-blocker-chain": {
 			Flag:        "--robot-blocker-chain <id>",
 			Description: "Full blocker chain analysis for an issue.",
+			KeyFields:   []string{"result.target_id", "result.is_blocked", "result.root_blockers", "result.chain", "result.has_cycle"},
 			NeedsIssues: true,
 		},
 		"robot-impact-network": {
 			Flag: "--robot-impact-network [<id>|all]", Description: "Impact network graph (full or subnetwork for a bead).",
+			KeyFields:   []string{"network.nodes", "network.edges", "stats.total_nodes", "top_clusters", "top_connected"},
 			Params:      []string{"--network-depth 1-3"},
 			NeedsIssues: true,
 			NeedsGit:    true,
@@ -8228,6 +8237,7 @@ func robotCommandDocs() map[string]robotCommandDoc {
 		"robot-causality": {
 			Flag:        "--robot-causality <id>",
 			Description: "Causal chain analysis for a bead.",
+			KeyFields:   []string{"chain.bead_id", "chain.events", "insights.summary", "insights.critical_path", "insights.recommendations"},
 			NeedsIssues: true,
 			NeedsGit:    true,
 		},
@@ -8943,6 +8953,10 @@ func generateRobotSchemas() RobotSchemas {
 		"robot-file-hotspots":     robotFileHotspotsOutputSchema(),
 		"robot-file-relations":    robotFileRelationsOutputSchema(),
 		"robot-impact":            robotImpactOutputSchema(),
+		"robot-related":           robotRelatedOutputSchema(),
+		"robot-blocker-chain":     robotBlockerChainOutputSchema(),
+		"robot-impact-network":    robotImpactNetworkOutputSchema(),
+		"robot-causality":         robotCausalityOutputSchema(),
 		"robot-orphans":           robotOrphansOutputSchema(),
 		"robot-metrics": {
 			"$schema":     "https://json-schema.org/draft/2020-12/schema",
@@ -9759,6 +9773,229 @@ func robotImpactOutputSchema() map[string]interface{} {
 		"warnings":       robotNullableArraySchema(map[string]interface{}{"type": "string"}),
 		"affected_beads": robotNullableArraySchema(robotAffectedBeadSchema()),
 	}, []string{"generated_at", "data_hash", "output_format", "version", "files", "risk_level", "risk_score", "summary", "warnings", "affected_beads"})
+}
+
+func robotRelatedOutputSchema() map[string]interface{} {
+	return robotFileCommandOutputSchema("Robot Related Output", "Beads related to a specific bead ID", map[string]interface{}{
+		"target_bead_id":     map[string]interface{}{"type": "string"},
+		"target_title":       map[string]interface{}{"type": "string"},
+		"file_overlap":       map[string]interface{}{"type": "array", "items": robotRelatedWorkBeadSchema()},
+		"commit_overlap":     map[string]interface{}{"type": "array", "items": robotRelatedWorkBeadSchema()},
+		"dependency_cluster": map[string]interface{}{"type": "array", "items": robotRelatedWorkBeadSchema()},
+		"concurrent":         map[string]interface{}{"type": "array", "items": robotRelatedWorkBeadSchema()},
+		"total_related":      map[string]interface{}{"type": "integer"},
+	}, []string{"generated_at", "data_hash", "output_format", "version", "target_bead_id", "target_title", "file_overlap", "commit_overlap", "dependency_cluster", "concurrent", "total_related"})
+}
+
+func robotRelatedWorkBeadSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"bead_id":        map[string]interface{}{"type": "string"},
+			"title":          map[string]interface{}{"type": "string"},
+			"status":         map[string]interface{}{"type": "string"},
+			"relation_type":  map[string]interface{}{"type": "string"},
+			"relevance":      map[string]interface{}{"type": "integer"},
+			"reason":         map[string]interface{}{"type": "string"},
+			"shared_files":   robotNullableArraySchema(map[string]interface{}{"type": "string"}),
+			"shared_commits": robotNullableArraySchema(map[string]interface{}{"type": "string"}),
+		},
+	}
+}
+
+func robotBlockerChainOutputSchema() map[string]interface{} {
+	return robotFileCommandOutputSchema("Robot Blocker Chain Output", "Full blocker chain analysis for an issue", map[string]interface{}{
+		"result": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"target_id":     map[string]interface{}{"type": "string"},
+				"target_title":  map[string]interface{}{"type": "string"},
+				"is_blocked":    map[string]interface{}{"type": "boolean"},
+				"chain_length":  map[string]interface{}{"type": "integer"},
+				"root_blockers": map[string]interface{}{"type": "array", "items": robotBlockerChainEntrySchema()},
+				"chain":         map[string]interface{}{"type": "array", "items": robotBlockerChainEntrySchema()},
+				"has_cycle":     map[string]interface{}{"type": "boolean"},
+				"cycle_ids":     robotNullableArraySchema(map[string]interface{}{"type": "string"}),
+			},
+		},
+	}, []string{"generated_at", "data_hash", "output_format", "version", "result"})
+}
+
+func robotBlockerChainEntrySchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id":           map[string]interface{}{"type": "string"},
+			"title":        map[string]interface{}{"type": "string"},
+			"status":       map[string]interface{}{"type": "string"},
+			"priority":     map[string]interface{}{"type": "integer"},
+			"depth":        map[string]interface{}{"type": "integer"},
+			"is_root":      map[string]interface{}{"type": "boolean"},
+			"actionable":   map[string]interface{}{"type": "boolean"},
+			"blocks_count": map[string]interface{}{"type": "integer"},
+		},
+	}
+}
+
+func robotImpactNetworkOutputSchema() map[string]interface{} {
+	return robotFileCommandOutputSchema("Robot Impact Network Output", "Impact network graph for all beads or one bead subnetwork", map[string]interface{}{
+		"bead_id":       map[string]interface{}{"type": "string"},
+		"depth":         map[string]interface{}{"type": "integer"},
+		"network":       robotImpactNetworkSchema(),
+		"stats":         robotNetworkStatsSchema(),
+		"top_clusters":  robotNullableArraySchema(robotBeadClusterSchema()),
+		"top_connected": robotNullableArraySchema(robotNetworkNodeSchema()),
+	}, []string{"generated_at", "data_hash", "output_format", "version", "depth", "network", "stats"})
+}
+
+func robotImpactNetworkSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"generated_at": map[string]interface{}{"type": "string", "format": "date-time"},
+			"data_hash":    map[string]interface{}{"type": "string"},
+			"nodes": map[string]interface{}{
+				"type":                 "object",
+				"additionalProperties": robotNetworkNodeSchema(),
+			},
+			"edges":    robotNullableArraySchema(robotNetworkEdgeSchema()),
+			"clusters": robotNullableArraySchema(robotBeadClusterSchema()),
+			"stats":    robotNetworkStatsSchema(),
+		},
+	}
+}
+
+func robotNetworkNodeSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"bead_id":       map[string]interface{}{"type": "string"},
+			"title":         map[string]interface{}{"type": "string"},
+			"status":        map[string]interface{}{"type": "string"},
+			"priority":      map[string]interface{}{"type": "integer"},
+			"last_activity": map[string]interface{}{"type": "string", "format": "date-time"},
+			"degree":        map[string]interface{}{"type": "integer"},
+			"cluster_id":    map[string]interface{}{"type": "integer"},
+			"commit_count":  map[string]interface{}{"type": "integer"},
+			"file_count":    map[string]interface{}{"type": "integer"},
+			"connectivity":  map[string]interface{}{"type": "number"},
+		},
+	}
+}
+
+func robotNetworkEdgeSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": true,
+	}
+}
+
+func robotBeadClusterSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"cluster_id":            map[string]interface{}{"type": "integer"},
+			"bead_ids":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"label":                 map[string]interface{}{"type": "string"},
+			"internal_edges":        map[string]interface{}{"type": "integer"},
+			"external_edges":        map[string]interface{}{"type": "integer"},
+			"internal_connectivity": map[string]interface{}{"type": "number"},
+			"central_bead":          map[string]interface{}{"type": "string"},
+			"shared_files":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"total_commits":         map[string]interface{}{"type": "integer"},
+		},
+	}
+}
+
+func robotNetworkStatsSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"total_nodes":     map[string]interface{}{"type": "integer"},
+			"total_edges":     map[string]interface{}{"type": "integer"},
+			"cluster_count":   map[string]interface{}{"type": "integer"},
+			"avg_degree":      map[string]interface{}{"type": "number"},
+			"max_degree":      map[string]interface{}{"type": "integer"},
+			"density":         map[string]interface{}{"type": "number"},
+			"isolated_nodes":  map[string]interface{}{"type": "integer"},
+			"largest_cluster": map[string]interface{}{"type": "integer"},
+		},
+	}
+}
+
+func robotCausalityOutputSchema() map[string]interface{} {
+	return robotFileCommandOutputSchema("Robot Causality Output", "Causal chain analysis for a bead", map[string]interface{}{
+		"chain":    robotCausalChainSchema(),
+		"insights": robotCausalInsightsSchema(),
+	}, []string{"generated_at", "data_hash", "output_format", "version", "chain", "insights"})
+}
+
+func robotCausalChainSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"bead_id":     map[string]interface{}{"type": "string"},
+			"title":       map[string]interface{}{"type": "string"},
+			"status":      map[string]interface{}{"type": "string"},
+			"events":      map[string]interface{}{"type": "array", "items": robotCausalEventSchema()},
+			"edge_count":  map[string]interface{}{"type": "integer"},
+			"start_time":  map[string]interface{}{"type": "string", "format": "date-time"},
+			"end_time":    map[string]interface{}{"type": "string", "format": "date-time"},
+			"total_time":  map[string]interface{}{"type": "integer"},
+			"is_complete": map[string]interface{}{"type": "boolean"},
+		},
+	}
+}
+
+func robotCausalEventSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id":            map[string]interface{}{"type": "integer"},
+			"type":          map[string]interface{}{"type": "string"},
+			"timestamp":     map[string]interface{}{"type": "string", "format": "date-time"},
+			"description":   map[string]interface{}{"type": "string"},
+			"commit_sha":    map[string]interface{}{"type": "string"},
+			"blocker_id":    map[string]interface{}{"type": "string"},
+			"caused_by_id":  map[string]interface{}{"type": "integer"},
+			"enables_ids":   robotNullableArraySchema(map[string]interface{}{"type": "integer"}),
+			"duration_next": map[string]interface{}{"type": "integer"},
+		},
+	}
+}
+
+func robotCausalInsightsSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"total_duration":     map[string]interface{}{"type": "integer"},
+			"blocked_duration":   map[string]interface{}{"type": "integer"},
+			"active_duration":    map[string]interface{}{"type": "integer"},
+			"blocked_percentage": map[string]interface{}{"type": "number"},
+			"blocked_periods":    robotNullableArraySchema(robotBlockedPeriodSchema()),
+			"critical_path":      robotNullableArraySchema(map[string]interface{}{"type": "integer"}),
+			"critical_path_desc": map[string]interface{}{"type": "string"},
+			"commit_count":       map[string]interface{}{"type": "integer"},
+			"avg_time_between":   map[string]interface{}{"type": "integer"},
+			"longest_gap":        map[string]interface{}{"type": "integer"},
+			"longest_gap_desc":   map[string]interface{}{"type": "string"},
+			"estimated_without":  map[string]interface{}{"type": "integer"},
+			"summary":            map[string]interface{}{"type": "string"},
+			"recommendations":    robotNullableArraySchema(map[string]interface{}{"type": "string"}),
+		},
+	}
+}
+
+func robotBlockedPeriodSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"start_time": map[string]interface{}{"type": "string", "format": "date-time"},
+			"end_time":   map[string]interface{}{"type": "string", "format": "date-time"},
+			"duration":   map[string]interface{}{"type": "integer"},
+			"blocker_id": map[string]interface{}{"type": "string"},
+		},
+	}
 }
 
 func robotNullableArraySchema(items map[string]interface{}) map[string]interface{} {
