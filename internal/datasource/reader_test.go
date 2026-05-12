@@ -188,6 +188,80 @@ func TestNewReader_UnknownType(t *testing.T) {
 	}
 }
 
+func TestSQLiteReader_MinimalValidatedSchemaLoads(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "beads.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE issues (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL
+		);
+		INSERT INTO issues (id, title, status) VALUES
+		('MIN-1', 'Minimal one', 'open'),
+		('MIN-2', 'Minimal two', 'closed');
+	`)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source := DataSource{Type: SourceTypeSQLite, Path: dbPath}
+	if err := ValidateSource(&source); err != nil {
+		t.Fatalf("minimal schema should validate: %v", err)
+	}
+
+	r, err := NewReader(source)
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+	defer r.Close()
+
+	issues, err := r.LoadIssues()
+	if err != nil {
+		t.Fatalf("LoadIssues: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("expected 2 issues, got %d", len(issues))
+	}
+	if issues[0].IssueType != model.TypeTask || issues[1].IssueType != model.TypeTask {
+		t.Fatalf("minimal schema should default issue type to task: %#v", issues)
+	}
+
+	count, err := r.CountIssues()
+	if err != nil {
+		t.Fatalf("CountIssues: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected count 2, got %d", count)
+	}
+
+	modified, err := r.GetLastModified()
+	if err != nil {
+		t.Fatalf("GetLastModified without updated_at should not fail: %v", err)
+	}
+	if !modified.IsZero() {
+		t.Fatalf("expected zero last-modified for schema without updated_at, got %v", modified)
+	}
+}
+
+func TestSQLiteReader_MissingReadOnlyDatabaseFailsAtOpen(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "missing.db")
+
+	r, err := NewSQLiteReader(DataSource{Type: SourceTypeSQLite, Path: dbPath})
+	if err == nil {
+		_ = r.Close()
+		t.Fatal("expected missing read-only database to fail during NewSQLiteReader")
+	}
+}
+
 // --- Test fixtures ---
 
 // createContractTestSQLiteDB creates a SQLite DB with 3 issues (2 open, 1 closed).

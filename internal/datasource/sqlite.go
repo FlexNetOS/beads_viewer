@@ -24,16 +24,20 @@ func NewSQLiteReader(source DataSource) (*SQLiteReader, error) {
 		return nil, fmt.Errorf("source is not SQLite: %s", source.Type)
 	}
 
-	// Open in read-only mode with various pragmas for read performance
+	// Open in read-only mode with various pragmas for read performance.
 	dsn := fmt.Sprintf("file:%s?mode=ro&_busy_timeout=5000&_journal_mode=WAL", source.Path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open database: %w", err)
 	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("cannot connect to database: %w", err)
+	}
 
 	// Set pragmas for read performance
 	pragmas := []string{
-		"PRAGMA cache_size = -64000",  // 64MB cache
+		"PRAGMA cache_size = -64000",   // 64MB cache
 		"PRAGMA mmap_size = 268435456", // 256MB mmap
 		"PRAGMA temp_store = MEMORY",
 	}
@@ -79,6 +83,27 @@ func (r *SQLiteReader) hasLabelsColumn() bool {
 		}
 	}
 	return false
+}
+
+func (r *SQLiteReader) issuesColumns() map[string]bool {
+	rows, err := r.db.Query("PRAGMA table_info(issues)")
+	if err != nil {
+		return map[string]bool{}
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			continue
+		}
+		columns[strings.ToLower(name)] = true
+	}
+	return columns
 }
 
 // hasLabelsTable checks whether a separate "labels" table exists.
@@ -230,12 +255,41 @@ func (r *SQLiteReader) LoadIssuesFiltered(filter func(*model.Issue) bool) ([]mod
 
 // loadIssuesSimple is a fallback for databases with fewer columns
 func (r *SQLiteReader) loadIssuesSimple(filter func(*model.Issue) bool) ([]model.Issue, error) {
-	query := `
-		SELECT id, title, description, status, priority, issue_type, created_at, updated_at
+	columns := r.issuesColumns()
+	expr := func(name, fallback string) string {
+		if columns[name] {
+			return name
+		}
+		return fallback
+	}
+	coalesceExpr := func(name, fallback string) string {
+		if columns[name] {
+			return fmt.Sprintf("COALESCE(%s, %s)", name, fallback)
+		}
+		return fallback
+	}
+	where := ""
+	if columns["tombstone"] {
+		where = "WHERE (tombstone IS NULL OR tombstone = 0)"
+	}
+	orderBy := "ORDER BY id"
+	if columns["updated_at"] {
+		orderBy = "ORDER BY updated_at DESC"
+	}
+	query := fmt.Sprintf(`
+		SELECT id, title, %s, status, %s, %s, %s, %s
 		FROM issues
-		WHERE (tombstone IS NULL OR tombstone = 0)
-		ORDER BY updated_at DESC
-	`
+		%s
+		%s
+	`,
+		expr("description", "NULL"),
+		coalesceExpr("priority", "3"),
+		coalesceExpr("issue_type", "'task'"),
+		expr("created_at", "NULL"),
+		expr("updated_at", "NULL"),
+		where,
+		orderBy,
+	)
 
 	rows, err := r.db.Query(query)
 	if err != nil {
@@ -295,7 +349,7 @@ func (r *SQLiteReader) loadIssuesSimple(filter func(*model.Issue) bool) ([]model
 func (r *SQLiteReader) loadLabelsFromTable(issueID string) []string {
 	rows, err := r.db.Query("SELECT label FROM labels WHERE issue_id = ?", issueID)
 	if err != nil {
-		return nil
+		return []string{}
 	}
 	defer rows.Close()
 
@@ -320,7 +374,7 @@ func (r *SQLiteReader) loadDependencies(issueID string) []*model.Dependency {
 	query := `SELECT depends_on_id, dependency_type FROM dependencies WHERE issue_id = ?`
 	rows, err := r.db.Query(query, issueID)
 	if err != nil {
-		return nil
+		return []*model.Dependency{}
 	}
 	defer rows.Close()
 
@@ -336,7 +390,7 @@ func (r *SQLiteReader) loadDependencies(issueID string) []*model.Dependency {
 		deps = append(deps, &dep)
 	}
 	// Note: rows.Err() not checked here since loadDependencies is a
-	// best-effort helper that returns nil on any error.
+	// best-effort helper that returns an empty slice on any error.
 	return deps
 }
 
@@ -345,7 +399,7 @@ func (r *SQLiteReader) loadComments(issueID string) []*model.Comment {
 	query := `SELECT id, author, text, created_at FROM comments WHERE issue_id = ? ORDER BY created_at`
 	rows, err := r.db.Query(query, issueID)
 	if err != nil {
-		return nil
+		return []*model.Comment{}
 	}
 	defer rows.Close()
 
@@ -363,14 +417,18 @@ func (r *SQLiteReader) loadComments(issueID string) []*model.Comment {
 		comments = append(comments, &comment)
 	}
 	// Note: rows.Err() not checked here since loadComments is a
-	// best-effort helper that returns nil on any error.
+	// best-effort helper that returns an empty slice on any error.
 	return comments
 }
 
 // CountIssues returns the count of non-tombstone issues
 func (r *SQLiteReader) CountIssues() (int, error) {
 	var count int
-	err := r.db.QueryRow("SELECT COUNT(*) FROM issues WHERE (tombstone IS NULL OR tombstone = 0)").Scan(&count)
+	query := "SELECT COUNT(*) FROM issues"
+	if r.issuesColumns()["tombstone"] {
+		query += " WHERE (tombstone IS NULL OR tombstone = 0)"
+	}
+	err := r.db.QueryRow(query).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -395,6 +453,9 @@ func (r *SQLiteReader) GetIssueByID(id string) (*model.Issue, error) {
 // modernc.org/sqlite stores DATETIME columns as text, so we scan as string
 // and parse manually.
 func (r *SQLiteReader) GetLastModified() (time.Time, error) {
+	if !r.issuesColumns()["updated_at"] {
+		return time.Time{}, nil
+	}
 	var raw sql.NullString
 	err := r.db.QueryRow("SELECT MAX(updated_at) FROM issues").Scan(&raw)
 	if err != nil {
