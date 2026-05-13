@@ -190,6 +190,16 @@ func TestDiscoverSources_RespectsBeadsDBSpecificFile(t *testing.T) {
 	}
 }
 
+func TestResolveBeadsDBPath_MissingSQLiteFileUsesParentDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "selected.sqlite3")
+
+	got := resolveBeadsDBPath(dbPath)
+	if got != filepath.Dir(dbPath) {
+		t.Fatalf("missing sqlite file should resolve to parent dir: got %s, want %s", got, filepath.Dir(dbPath))
+	}
+}
+
 func TestLoadIssues_RespectsBeadsDBSpecificJSONL(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")

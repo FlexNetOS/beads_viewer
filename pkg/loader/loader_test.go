@@ -1264,6 +1264,21 @@ func TestGetBeadsDir_EnvVarEmpty_FallsBack(t *testing.T) {
 	}
 }
 
+func TestGetBeadsDir_BeadsDBMissingSQLiteFileUsesParentDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, ".beads", "beads.sqlite3")
+	t.Setenv(loader.BeadsDBEnvVar, dbPath)
+	t.Setenv(loader.BeadsDirEnvVar, filepath.Join(t.TempDir(), ".beads"))
+
+	result, err := loader.GetBeadsDir("/some/random/path")
+	if err != nil {
+		t.Fatalf("GetBeadsDir: %v", err)
+	}
+	if result != filepath.Dir(dbPath) {
+		t.Fatalf("BEADS_DB sqlite file should resolve to parent dir: got %s, want %s", result, filepath.Dir(dbPath))
+	}
+}
+
 func TestGetBeadsDir_FindsBeadsInGitRepo(t *testing.T) {
 	// Unset environment variable
 	oldVal := os.Getenv(loader.BeadsDirEnvVar)

@@ -80,7 +80,7 @@ func GetBeadsDir(repoPath string) (string, error) {
 }
 
 // resolveBeadsDB interprets a BEADS_DB value which can be either:
-//   - An absolute path to a specific file (e.g., /path/to/.beads/beads.jsonl or /path/to/.beads/beads.db)
+//   - An absolute path to a specific file (e.g., /path/to/.beads/beads.{jsonl,db,sqlite3})
 //   - An absolute path to a .beads directory
 //
 // If it points to a file, returns the parent directory.
@@ -89,7 +89,7 @@ func resolveBeadsDB(dbPath string) (string, error) {
 	info, err := os.Stat(dbPath)
 	if err != nil {
 		// Path doesn't exist yet -- guess based on whether it looks like a file path
-		if strings.HasSuffix(dbPath, ".jsonl") || strings.HasSuffix(dbPath, ".db") {
+		if looksLikeBeadsDBFile(dbPath) {
 			return filepath.Dir(dbPath), nil
 		}
 		// Assume it's a directory
@@ -102,6 +102,15 @@ func resolveBeadsDB(dbPath string) (string, error) {
 
 	// It's a file -- return the parent directory
 	return filepath.Dir(dbPath), nil
+}
+
+func looksLikeBeadsDBFile(dbPath string) bool {
+	switch strings.ToLower(filepath.Ext(dbPath)) {
+	case ".jsonl", ".db", ".sqlite", ".sqlite3":
+		return true
+	default:
+		return false
+	}
 }
 
 // IsBDWorkspace returns true when the given .beads directory belongs to a

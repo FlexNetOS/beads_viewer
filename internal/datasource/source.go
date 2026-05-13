@@ -195,7 +195,7 @@ func resolveBeadsDBPath(dbPath string) string {
 	info, err := os.Stat(dbPath)
 	if err != nil {
 		// Path doesn't exist -- guess based on extension
-		if strings.HasSuffix(dbPath, ".jsonl") || strings.HasSuffix(dbPath, ".db") {
+		if _, _, ok := explicitBeadsDBFileType(dbPath); ok {
 			return filepath.Dir(dbPath)
 		}
 		return dbPath
