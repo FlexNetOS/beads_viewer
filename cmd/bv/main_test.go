@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Dicklesworthstone/beads_viewer/pkg/export"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/loader"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/recipe"
@@ -247,6 +248,65 @@ func TestResolveSingleRepoWatchFile_RespectsExplicitBeadsDBFile(t *testing.T) {
 		t.Fatalf("resolveSingleRepoWatchFile: %v", err)
 	}
 	requireString(t, got, dbPath)
+}
+
+func TestResolvePagesSource_RespectsExplicitBeadsDBFile(t *testing.T) {
+	beadsDir := t.TempDir()
+	selectedPath := filepath.Join(beadsDir, "selected.jsonl")
+	defaultPath := filepath.Join(beadsDir, "beads.jsonl")
+
+	writeIssueJSONL(t, selectedPath, "SELECTED-1")
+	writeIssueJSONL(t, defaultPath, "DEFAULT-1")
+	t.Setenv(loader.BeadsDBEnvVar, selectedPath)
+
+	source, err := resolvePagesSource(&export.WizardConfig{}, "")
+	if err != nil {
+		t.Fatalf("resolvePagesSource: %v", err)
+	}
+	if len(source.Issues) != 1 {
+		t.Fatalf("issue count = %d, want 1", len(source.Issues))
+	}
+	requireString(t, source.Issues[0].ID, "SELECTED-1")
+	requireString(t, source.SourcePath, selectedPath)
+}
+
+func TestResolvePagesSource_RespectsSavedSourcePath(t *testing.T) {
+	beadsDir := t.TempDir()
+	selectedPath := filepath.Join(beadsDir, "selected.jsonl")
+	defaultPath := filepath.Join(beadsDir, "beads.jsonl")
+
+	writeIssueJSONL(t, selectedPath, "SAVED-1")
+	writeIssueJSONL(t, defaultPath, "DEFAULT-1")
+
+	source, err := resolvePagesSource(&export.WizardConfig{SourcePath: selectedPath}, "")
+	if err != nil {
+		t.Fatalf("resolvePagesSource: %v", err)
+	}
+	if len(source.Issues) != 1 {
+		t.Fatalf("issue count = %d, want 1", len(source.Issues))
+	}
+	requireString(t, source.Issues[0].ID, "SAVED-1")
+	requireString(t, source.SourcePath, selectedPath)
+}
+
+func TestResolvePagesSource_ExplicitBeadsDBOverridesSavedSourcePath(t *testing.T) {
+	beadsDir := t.TempDir()
+	savedPath := filepath.Join(beadsDir, "saved.jsonl")
+	explicitPath := filepath.Join(beadsDir, "explicit.jsonl")
+
+	writeIssueJSONL(t, savedPath, "SAVED-1")
+	writeIssueJSONL(t, explicitPath, "EXPLICIT-1")
+	t.Setenv(loader.BeadsDBEnvVar, explicitPath)
+
+	source, err := resolvePagesSource(&export.WizardConfig{SourcePath: savedPath}, "")
+	if err != nil {
+		t.Fatalf("resolvePagesSource: %v", err)
+	}
+	if len(source.Issues) != 1 {
+		t.Fatalf("issue count = %d, want 1", len(source.Issues))
+	}
+	requireString(t, source.Issues[0].ID, "EXPLICIT-1")
+	requireString(t, source.SourcePath, explicitPath)
 }
 
 func TestUnknownCommandErrorSuggestsNearestCommand(t *testing.T) {
@@ -2050,6 +2110,14 @@ func writeTestBeadsFixture(t *testing.T, dir string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".beads", "beads.jsonl"), []byte(beads), 0o644); err != nil {
 		t.Fatalf("write beads dir: %v", err)
+	}
+}
+
+func writeIssueJSONL(t *testing.T, path, id string) {
+	t.Helper()
+	content := `{"id":"` + id + `","title":"` + id + `","status":"open","issue_type":"task"}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write issue JSONL: %v", err)
 	}
 }
 

@@ -30,6 +30,7 @@ type WizardConfig struct {
 	// Source metadata for reliable updates
 	SourceBeadsDir string `json:"source_beads_dir,omitempty"`
 	SourceRepoRoot string `json:"source_repo_root,omitempty"`
+	SourcePath     string `json:"source_path,omitempty"`
 	LastIssueCount int    `json:"last_issue_count,omitempty"`
 	LastDataHash   string `json:"last_data_hash,omitempty"`
 

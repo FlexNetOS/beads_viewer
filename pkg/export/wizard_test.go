@@ -139,6 +139,7 @@ func TestSaveAndLoadWizardConfig(t *testing.T) {
 		IncludeClosed:  true,
 		IncludeHistory: true,
 		Title:          "Saved Title",
+		SourcePath:     filepath.Join(tmpDir, ".beads", "selected.jsonl"),
 		DeployTarget:   "github",
 		RepoName:       "saved-repo",
 		RepoPrivate:    true,
@@ -163,6 +164,9 @@ func TestSaveAndLoadWizardConfig(t *testing.T) {
 	}
 	if loaded.DeployTarget != "github" {
 		t.Fatalf("Expected loaded DeployTarget %q, got %q", "github", loaded.DeployTarget)
+	}
+	if loaded.SourcePath != config.SourcePath {
+		t.Fatalf("Expected loaded SourcePath %q, got %q", config.SourcePath, loaded.SourcePath)
 	}
 }
 

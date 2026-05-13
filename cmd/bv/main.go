@@ -6857,6 +6857,7 @@ func runPagesWizard(beadsPath string) error {
 	if source.RepoRoot != "" {
 		config.SourceRepoRoot = source.RepoRoot
 	}
+	config.SourcePath = source.SourcePath
 	config.LastIssueCount = len(exportIssues)
 	config.LastDataHash = analysis.ComputeDataHash(exportIssues)
 
@@ -6867,10 +6868,11 @@ func runPagesWizard(beadsPath string) error {
 }
 
 type pagesSource struct {
-	Issues   []model.Issue
-	BeadsDir string
-	RepoRoot string
-	Reason   string
+	Issues     []model.Issue
+	BeadsDir   string
+	RepoRoot   string
+	SourcePath string
+	Reason     string
 }
 
 type pagesSourceCandidate struct {
@@ -6881,6 +6883,25 @@ type pagesSourceCandidate struct {
 func resolvePagesSource(config *export.WizardConfig, beadsPath string) (pagesSource, error) {
 	var candidates []pagesSourceCandidate
 	seen := map[string]bool{}
+	var lastErr error
+
+	if source, ok, err := datasource.ExplicitBeadsDBSource(); err != nil {
+		return pagesSource{}, err
+	} else if ok {
+		src, err := loadPagesSourceFromDataSource(source, "explicit BEADS_DB file")
+		if err != nil {
+			return pagesSource{}, err
+		}
+		return src, nil
+	}
+	if config.SourcePath != "" {
+		src, ok, err := loadPagesSourceFromFile(config.SourcePath, "saved source file")
+		if err != nil {
+			lastErr = err
+		} else if ok {
+			return src, nil
+		}
+	}
 
 	addCandidate := func(dir, reason string) {
 		if dir == "" {
@@ -6909,7 +6930,6 @@ func resolvePagesSource(config *export.WizardConfig, beadsPath string) (pagesSou
 		addCandidate(dir, "current repo")
 	}
 
-	var lastErr error
 	for _, cand := range candidates {
 		if info, err := os.Stat(cand.BeadsDir); err != nil || !info.IsDir() {
 			continue
@@ -6939,6 +6959,34 @@ func resolvePagesSource(config *export.WizardConfig, beadsPath string) (pagesSou
 		return pagesSource{}, lastErr
 	}
 	return pagesSource{}, fmt.Errorf("no valid beads source found for pages export")
+}
+
+func loadPagesSourceFromFile(path, reason string) (pagesSource, bool, error) {
+	source, ok, err := datasource.SourceFromFile(path)
+	if err != nil || !ok {
+		return pagesSource{}, ok, err
+	}
+	src, err := loadPagesSourceFromDataSource(source, reason)
+	return src, true, err
+}
+
+func loadPagesSourceFromDataSource(source datasource.DataSource, reason string) (pagesSource, error) {
+	issues, err := datasource.LoadFromSource(source)
+	if err != nil {
+		return pagesSource{}, err
+	}
+	sourcePath := source.Path
+	if abs, err := filepath.Abs(sourcePath); err == nil {
+		sourcePath = abs
+	}
+	beadsDir := filepath.Dir(sourcePath)
+	return pagesSource{
+		Issues:     issues,
+		BeadsDir:   beadsDir,
+		RepoRoot:   filepath.Dir(beadsDir),
+		SourcePath: sourcePath,
+		Reason:     reason,
+	}, nil
 }
 
 func isSuspiciousIssueCount(current, expected int) bool {
