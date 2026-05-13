@@ -5,7 +5,7 @@
 package export
 
 import (
-	"context"
+	"bytes"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -24,9 +24,9 @@ type LiveReloadHub struct {
 	mu      sync.RWMutex
 	clients map[chan struct{}]struct{}
 
-	// context for shutdown
-	ctx    context.Context
-	cancel context.CancelFunc
+	// shutdown signal
+	done     chan struct{}
+	stopOnce sync.Once
 
 	// debounce rapid file changes
 	lastEvent time.Time
@@ -40,14 +40,11 @@ func NewLiveReloadHub(bundlePath string) (*LiveReloadHub, error) {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	hub := &LiveReloadHub{
 		bundlePath: bundlePath,
 		watcher:    watcher,
 		clients:    make(map[chan struct{}]struct{}),
-		ctx:        ctx,
-		cancel:     cancel,
+		done:       make(chan struct{}),
 		debounce:   200 * time.Millisecond,
 	}
 
@@ -76,16 +73,18 @@ func (h *LiveReloadHub) Start() error {
 
 // Stop shuts down the live-reload hub.
 func (h *LiveReloadHub) Stop() {
-	h.cancel()
-	h.watcher.Close()
+	h.stopOnce.Do(func() {
+		close(h.done)
+		_ = h.watcher.Close()
 
-	// Close all client channels
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for ch := range h.clients {
-		close(ch)
-	}
-	h.clients = make(map[chan struct{}]struct{})
+		// Close all client channels
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for ch := range h.clients {
+			close(ch)
+		}
+		h.clients = make(map[chan struct{}]struct{})
+	})
 }
 
 // ClientCount returns the number of connected clients.
@@ -99,7 +98,7 @@ func (h *LiveReloadHub) ClientCount() int {
 func (h *LiveReloadHub) watchLoop() {
 	for {
 		select {
-		case <-h.ctx.Done():
+		case <-h.done:
 			return
 
 		case event, ok := <-h.watcher.Events:
@@ -182,7 +181,7 @@ func (h *LiveReloadHub) SSEHandler() http.HandlerFunc {
 			select {
 			case <-r.Context().Done():
 				return
-			case <-h.ctx.Done():
+			case <-h.done:
 				return
 			case _, ok := <-clientCh:
 				if !ok {
@@ -316,17 +315,5 @@ func findLastIndex(haystack, needle []byte) int {
 	if len(needle) == 0 {
 		return -1
 	}
-	for i := len(haystack) - len(needle); i >= 0; i-- {
-		found := true
-		for j := 0; j < len(needle); j++ {
-			if haystack[i+j] != needle[j] {
-				found = false
-				break
-			}
-		}
-		if found {
-			return i
-		}
-	}
-	return -1
+	return bytes.LastIndex(haystack, needle)
 }

@@ -25,6 +25,8 @@ const (
 	repoOwner = "Dicklesworthstone"
 	repoName  = "beads_viewer"
 	baseURL   = "https://api.github.com/repos/" + repoOwner + "/" + repoName
+
+	maxReleaseMetadataBytes = 1 << 20
 )
 
 // githubToken returns a GitHub personal access token from the environment,
@@ -55,6 +57,21 @@ func setGitHubAuth(req *http.Request) {
 	if tok := githubToken(); tok != "" && isGitHubHost(req.URL) {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
+}
+
+func safeAssetName(name string) (string, error) {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+		return "", fmt.Errorf("unsafe release asset name %q", name)
+	}
+	return name, nil
+}
+
+func decodeReleaseMetadata(body io.Reader) (Release, error) {
+	var rel Release
+	if err := json.NewDecoder(io.LimitReader(body, maxReleaseMetadataBytes)).Decode(&rel); err != nil {
+		return Release{}, err
+	}
+	return rel, nil
 }
 
 // Release represents a GitHub release
@@ -117,8 +134,8 @@ func checkForUpdates(client *http.Client, url string) (string, string, error) {
 		return "", "", fmt.Errorf("github api returned status: %s", resp.Status)
 	}
 
-	var rel Release
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+	rel, err := decodeReleaseMetadata(resp.Body)
+	if err != nil {
 		return "", "", err
 	}
 
@@ -367,8 +384,8 @@ func GetLatestRelease() (*Release, error) {
 		return nil, fmt.Errorf("github api returned status: %s", resp.Status)
 	}
 
-	var rel Release
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+	rel, err := decodeReleaseMetadata(resp.Body)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse release info: %w", err)
 	}
 
@@ -642,7 +659,11 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 	defer os.RemoveAll(tmpDir)
 
 	// Download archive
-	archivePath := filepath.Join(tmpDir, asset.Name)
+	assetName, err := safeAssetName(asset.Name)
+	if err != nil {
+		return nil, err
+	}
+	archivePath := filepath.Join(tmpDir, assetName)
 	fmt.Printf("Downloading %s...\n", release.TagName)
 	if err := downloadFile(asset.BrowserDownloadURL, archivePath, asset.Size); err != nil {
 		return nil, fmt.Errorf("download failed: %w", err)
@@ -691,7 +712,16 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 	// Create backup of current binary
 	backupPath := GetBackupPath(binaryPath)
 	fmt.Printf("Backing up current binary to %s...\n", backupPath)
-	if err := copyFile(binaryPath, backupPath); err != nil {
+
+	// Move the current binary out of the way. This avoids ETXTBSY on Linux
+	// and "file in use" errors on Windows when writing the new binary.
+	// If a backup already exists and rename cannot replace it, fall back to
+	// copyFile so the previous backup is not removed before a fresh backup
+	// is successfully written.
+	movedForBackup := false
+	if err := os.Rename(binaryPath, backupPath); err == nil {
+		movedForBackup = true
+	} else if err := copyFile(binaryPath, backupPath); err != nil {
 		return nil, fmt.Errorf("backup failed: %w", err)
 	}
 	result.BackupPath = backupPath
@@ -699,11 +729,19 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 	// Replace binary
 	fmt.Println("Installing new version...")
 	if err := os.Rename(newBinaryPath, binaryPath); err != nil {
+		// If binaryPath still exists (copy fallback above), try to remove it first
+		if !movedForBackup {
+			_ = os.Remove(binaryPath)
+		}
 		// On some systems, rename across filesystems doesn't work
 		if err := copyFile(newBinaryPath, binaryPath); err != nil {
 			// Restore from backup
-			if restoreErr := copyFile(backupPath, binaryPath); restoreErr != nil {
-				return nil, fmt.Errorf("installation failed: %w (restore also failed: %v; manual recovery: cp %s %s)", err, restoreErr, backupPath, binaryPath)
+			restoreErr := os.Rename(backupPath, binaryPath)
+			if restoreErr != nil {
+				restoreErr = copyFile(backupPath, binaryPath)
+			}
+			if restoreErr != nil {
+				return nil, fmt.Errorf("installation failed: %w (restore also failed: %v; manual recovery: mv %s %s)", err, restoreErr, backupPath, binaryPath)
 			}
 			return nil, fmt.Errorf("installation failed (restored from backup): %w", err)
 		}
@@ -764,8 +802,31 @@ func Rollback() error {
 	}
 
 	fmt.Printf("Rolling back from backup at %s...\n", backupPath)
-	if err := copyFile(backupPath, binaryPath); err != nil {
-		return fmt.Errorf("rollback failed: %w", err)
+
+	// Move the currently running binary out of the way to avoid ETXTBSY / file-in-use
+	badPath := binaryPath + ".bad"
+	_ = os.Remove(badPath)
+	movedToBad := false
+	if err := os.Rename(binaryPath, badPath); err == nil {
+		movedToBad = true
+	}
+
+	if err := os.Rename(backupPath, binaryPath); err != nil {
+		if !movedToBad {
+			_ = os.Remove(binaryPath)
+		}
+		if copyErr := copyFile(backupPath, binaryPath); copyErr != nil {
+			// Try to restore the bad binary if rollback completely failed
+			if movedToBad {
+				_ = os.Rename(badPath, binaryPath)
+			}
+			return fmt.Errorf("rollback failed: %w", copyErr)
+		}
+	}
+
+	// Clean up the bad binary if we successfully renamed it out of the way
+	if movedToBad {
+		_ = os.Remove(badPath) // May fail on Windows if it's currently executing, but that's fine
 	}
 
 	fmt.Println("Rollback complete")

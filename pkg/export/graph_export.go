@@ -309,7 +309,7 @@ func generateDOT(issues []model.Issue, issueIDs map[string]bool, stats *analysis
 
 			style := "dashed"
 			color := "#999999"
-			if dep.Type == model.DepBlocks {
+			if dep.Type.IsBlocking() {
 				style = "bold"
 				color = "#E53935" // Red for blocking
 			}
@@ -469,7 +469,7 @@ func generateMermaid(issues []model.Issue, issueIDs map[string]bool) string {
 			safeToID := getSafeID(dep.DependsOnID)
 
 			linkStyle := "-.->" // Dashed for related
-			if dep.Type == model.DepBlocks {
+			if dep.Type.IsBlocking() {
 				linkStyle = "==>" // Bold for blockers
 			}
 
@@ -535,7 +535,7 @@ func generateAdjacency(issues []model.Issue, issueIDs map[string]bool, stats *an
 			}
 
 			edgeType := "related"
-			if dep.Type == model.DepBlocks {
+			if dep.Type.IsBlocking() {
 				edgeType = "blocks"
 			}
 
