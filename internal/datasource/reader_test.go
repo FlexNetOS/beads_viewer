@@ -262,6 +262,99 @@ func TestSQLiteReader_MissingReadOnlyDatabaseFailsAtOpen(t *testing.T) {
 	}
 }
 
+func TestSQLiteReader_RejectsURIControlCharsInPath(t *testing.T) {
+	for _, name := range []string{"odd?name.db", "odd#name.db"} {
+		t.Run(name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), name)
+			if err := os.WriteFile(dbPath, []byte("placeholder"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := NewSQLiteReader(DataSource{Type: SourceTypeSQLite, Path: dbPath}); err == nil {
+				t.Fatal("expected URI control character path to be rejected")
+			}
+		})
+	}
+}
+
+func TestSQLiteReader_FallbackSchemaLoadsGraphMetadata(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "export.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = db.Exec(`
+		CREATE TABLE issues (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			description TEXT,
+			status TEXT NOT NULL,
+			priority INTEGER NOT NULL,
+			issue_type TEXT NOT NULL,
+			assignee TEXT,
+			labels TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			closed_at TEXT
+		);
+		CREATE TABLE dependencies (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			issue_id TEXT NOT NULL,
+			depends_on_id TEXT NOT NULL,
+			type TEXT NOT NULL DEFAULT 'blocks'
+		);
+		CREATE TABLE comments (
+			id TEXT PRIMARY KEY,
+			issue_id TEXT NOT NULL,
+			author TEXT,
+			text TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		);
+		INSERT INTO issues (id, title, description, status, priority, issue_type, assignee, labels, created_at, updated_at)
+		VALUES ('EXP-1', 'Export issue', 'from export schema', 'open', 1, 'task', '', '["graph","sqlite"]', ?, ?);
+		INSERT INTO issues (id, title, description, status, priority, issue_type, assignee, labels, created_at, updated_at)
+		VALUES ('ROOT-1', 'Root issue', '', 'open', 2, 'task', '', '[]', ?, ?);
+		INSERT INTO dependencies (issue_id, depends_on_id, type)
+		VALUES ('EXP-1', 'ROOT-1', 'blocks');
+		INSERT INTO comments (id, issue_id, author, text, created_at)
+		VALUES ('comment-1', 'EXP-1', 'agent', 'keeps metadata', ?);
+	`, now, now, now, now, now)
+	if closeErr := db.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := NewSQLiteReader(DataSource{Type: SourceTypeSQLite, Path: dbPath})
+	if err != nil {
+		t.Fatalf("NewSQLiteReader: %v", err)
+	}
+	defer r.Close()
+
+	issue, err := r.GetIssueByID("EXP-1")
+	if err != nil {
+		t.Fatalf("GetIssueByID: %v", err)
+	}
+	if len(issue.Labels) != 2 || issue.Labels[0] != "graph" || issue.Labels[1] != "sqlite" {
+		t.Fatalf("expected labels from fallback schema, got %#v", issue.Labels)
+	}
+	if len(issue.Dependencies) != 1 {
+		t.Fatalf("expected one dependency from fallback schema, got %#v", issue.Dependencies)
+	}
+	if issue.Dependencies[0].IssueID != "EXP-1" ||
+		issue.Dependencies[0].DependsOnID != "ROOT-1" ||
+		issue.Dependencies[0].Type != model.DepBlocks {
+		t.Fatalf("unexpected dependency: %#v", issue.Dependencies[0])
+	}
+	if len(issue.Comments) != 1 || issue.Comments[0].Text != "keeps metadata" {
+		t.Fatalf("expected comments from fallback schema, got %#v", issue.Comments)
+	}
+}
+
 // --- Test fixtures ---
 
 // createContractTestSQLiteDB creates a SQLite DB with 3 issues (2 open, 1 closed).
