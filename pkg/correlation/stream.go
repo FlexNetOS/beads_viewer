@@ -86,13 +86,17 @@ func (s *StreamExtractor) StreamEvents(opts StreamOptions) ([]BeadEvent, error) 
 	}
 
 	// Parse events as they stream in
-	events, err := s.parseStream(stdout, opts.BeadID, opts.ClosedSince, totalCommits, opts.OnProgress)
+	events, parseErr := s.parseStream(stdout, opts.BeadID, opts.ClosedSince, totalCommits, opts.OnProgress)
+	if parseErr != nil {
+		// Stop git before waiting. If parsing stopped early, git may still be
+		// blocked writing to stdout; waiting first can deadlock.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("parsing git log stream: %w", parseErr)
+	}
 
 	// Wait for command to finish
 	cmdErr := cmd.Wait()
-	if err != nil {
-		return nil, err
-	}
 	if cmdErr != nil {
 		// Check if it's just because we reached the limit
 		if exitErr, ok := cmdErr.(*exec.ExitError); ok {
@@ -181,7 +185,10 @@ func (s *StreamExtractor) parseStream(r io.Reader, filterBeadID string, closedSi
 		if commitPattern.MatchString(line) {
 			// Process previous commit if exists
 			if currentCommit != nil {
-				commitEvents := s.processCommitBuffer(currentCommit, filterBeadID, closedSince)
+				commitEvents, err := s.processCommitBuffer(currentCommit, filterBeadID, closedSince)
+				if err != nil {
+					return events, err
+				}
 				events = append(events, commitEvents...)
 			}
 
@@ -209,7 +216,10 @@ func (s *StreamExtractor) parseStream(r io.Reader, filterBeadID string, closedSi
 
 	// Process final commit
 	if currentCommit != nil {
-		commitEvents := s.processCommitBuffer(currentCommit, filterBeadID, closedSince)
+		commitEvents, err := s.processCommitBuffer(currentCommit, filterBeadID, closedSince)
+		if err != nil {
+			return events, err
+		}
 		events = append(events, commitEvents...)
 	}
 
@@ -227,16 +237,16 @@ type commitBuffer struct {
 }
 
 // processCommitBuffer processes a buffered commit and extracts events
-func (s *StreamExtractor) processCommitBuffer(buf *commitBuffer, filterBeadID string, closedSince *time.Time) []BeadEvent {
+func (s *StreamExtractor) processCommitBuffer(buf *commitBuffer, filterBeadID string, closedSince *time.Time) ([]BeadEvent, error) {
 	// Parse commit info
 	info, err := parseCommitHeader(buf.headerLine)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("parsing commit header: %w", err)
 	}
 
 	// Parse diff
 	events := s.parseBufferedDiff(buf.diffLines, info, filterBeadID, closedSince)
-	return events
+	return events, nil
 }
 
 // parseCommitHeader extracts commit metadata from the header line

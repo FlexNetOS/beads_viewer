@@ -436,3 +436,19 @@ def456abc123789012345678901234567890abcd` + "\x00" + `2025-12-15T10:31:00Z` + "\
 		t.Error("progress callback should have been called")
 	}
 }
+
+func TestStreamExtractor_ParseStreamInvalidHeaderReturnsError(t *testing.T) {
+	s := NewStreamExtractor("/tmp/test")
+
+	input := strings.NewReader(`abc123def456789012345678901234567890abcd` + "\x00" + `not-a-time` + "\x00" + `John` + "\x00" + `john@test.com` + "\x00" + `Commit
++{"id":"bv-1","status":"open"}
+`)
+
+	_, err := s.parseStream(input, "", nil, 1, nil)
+	if err == nil {
+		t.Fatalf("parseStream accepted a malformed commit header")
+	}
+	if !strings.Contains(err.Error(), "parsing commit header") {
+		t.Fatalf("parseStream error = %v, want commit header context", err)
+	}
+}
