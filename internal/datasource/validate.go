@@ -88,9 +88,6 @@ func validateSQLite(source *DataSource, opts ValidationOptions) error {
 	if info.IsDir() {
 		return fmt.Errorf("path is a directory, not a file")
 	}
-	if err := rejectSQLiteURIControlPath(source.Path); err != nil {
-		return err
-	}
 
 	// Open database
 	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(source.Path))

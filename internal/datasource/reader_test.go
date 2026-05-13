@@ -262,16 +262,24 @@ func TestSQLiteReader_MissingReadOnlyDatabaseFailsAtOpen(t *testing.T) {
 	}
 }
 
-func TestSQLiteReader_RejectsURIControlCharsInPath(t *testing.T) {
+func TestSQLiteReader_EscapesURIControlCharsInPath(t *testing.T) {
 	for _, name := range []string{"odd?name.db", "odd#name.db"} {
 		t.Run(name, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), name)
-			if err := os.WriteFile(dbPath, []byte("placeholder"), 0644); err != nil {
-				t.Fatal(err)
-			}
+			createContractTestSQLiteDB(t, dbPath)
 
-			if _, err := NewSQLiteReader(DataSource{Type: SourceTypeSQLite, Path: dbPath}); err == nil {
-				t.Fatal("expected URI control character path to be rejected")
+			r, err := NewSQLiteReader(DataSource{Type: SourceTypeSQLite, Path: dbPath})
+			if err != nil {
+				t.Fatalf("NewSQLiteReader: %v", err)
+			}
+			defer r.Close()
+
+			issue, err := r.GetIssueByID("CTR-1")
+			if err != nil {
+				t.Fatalf("GetIssueByID: %v", err)
+			}
+			if issue.ID != "CTR-1" {
+				t.Fatalf("opened wrong SQLite database: got issue %q", issue.ID)
 			}
 		})
 	}
@@ -360,7 +368,7 @@ func TestSQLiteReader_FallbackSchemaLoadsGraphMetadata(t *testing.T) {
 // createContractTestSQLiteDB creates a SQLite DB with 3 issues (2 open, 1 closed).
 func createContractTestSQLiteDB(t *testing.T, path string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteFileDSN(path, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

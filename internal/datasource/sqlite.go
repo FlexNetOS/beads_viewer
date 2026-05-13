@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,9 +24,6 @@ type SQLiteReader struct {
 func NewSQLiteReader(source DataSource) (*SQLiteReader, error) {
 	if source.Type != SourceTypeSQLite {
 		return nil, fmt.Errorf("source is not SQLite: %s", source.Type)
-	}
-	if err := rejectSQLiteURIControlPath(source.Path); err != nil {
-		return nil, err
 	}
 	if _, err := os.Stat(source.Path); err != nil {
 		return nil, fmt.Errorf("cannot access database: %w", err)
@@ -62,14 +60,12 @@ func NewSQLiteReader(source DataSource) (*SQLiteReader, error) {
 }
 
 func sqliteReadOnlyDSN(path string) string {
-	return fmt.Sprintf("file:%s?mode=ro", path)
+	return sqliteFileDSN(path, "mode=ro")
 }
 
-func rejectSQLiteURIControlPath(path string) error {
-	if strings.ContainsAny(path, "?#") {
-		return fmt.Errorf("sqlite database path cannot contain ? or #: %s", path)
-	}
-	return nil
+func sqliteFileDSN(path, rawQuery string) string {
+	u := url.URL{Scheme: "file", Path: path, RawQuery: rawQuery}
+	return u.String()
 }
 
 // Close closes the database connection
