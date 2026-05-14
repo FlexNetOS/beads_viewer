@@ -2,6 +2,7 @@ package updater
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -392,20 +393,59 @@ func GetLatestRelease() (*Release, error) {
 	return &rel, nil
 }
 
-// getAssetName returns the expected asset name for the current platform
-func getAssetName(version string) string {
-	ver := strings.TrimPrefix(version, "v")
+func platformArchiveExtension(goos string) string {
+	if goos == "windows" {
+		return ".zip"
+	}
+	return ".tar.gz"
+}
+
+func stableAssetName() string {
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
-	return fmt.Sprintf("bv_%s_%s_%s.tar.gz", ver, goos, goarch)
+	return fmt.Sprintf("bv_%s_%s%s", goos, goarch, platformArchiveExtension(goos))
+}
+
+// getAssetName returns the legacy versioned asset name for older releases.
+func getAssetName(version string) string {
+	ver := strings.TrimPrefix(version, "v")
+	return fmt.Sprintf("bv_%s_%s_%s%s", ver, runtime.GOOS, runtime.GOARCH, platformArchiveExtension(runtime.GOOS))
+}
+
+func platformAssetNames(version string) []string {
+	ver := strings.TrimPrefix(version, "v")
+
+	names := []string{stableAssetName()}
+	if ver != "" {
+		names = append(names, getAssetName(version))
+		if runtime.GOOS == "windows" {
+			names = append(names, fmt.Sprintf("bv_%s_%s_%s.tar.gz", ver, runtime.GOOS, runtime.GOARCH))
+		}
+	}
+	return names
 }
 
 // FindPlatformAsset finds the appropriate asset for the current OS/arch
 func (r *Release) FindPlatformAsset() *Asset {
-	targetName := getAssetName(r.TagName)
-	for i := range r.Assets {
-		if r.Assets[i].Name == targetName {
-			return &r.Assets[i]
+	for _, targetName := range platformAssetNames(r.TagName) {
+		for i := range r.Assets {
+			if r.Assets[i].Name == targetName {
+				return &r.Assets[i]
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Release) findPlatformAssetWithChecksum(checksums map[string]string) *Asset {
+	for _, targetName := range platformAssetNames(r.TagName) {
+		if _, ok := checksums[targetName]; !ok {
+			continue
+		}
+		for i := range r.Assets {
+			if r.Assets[i].Name == targetName {
+				return &r.Assets[i]
+			}
 		}
 	}
 	return nil
@@ -553,8 +593,15 @@ func verifyChecksum(filePath, expectedHash string) error {
 	return nil
 }
 
-// extractBinary extracts the bv binary from a .tar.gz archive
+// extractBinary extracts the bv binary from a .tar.gz or .zip archive.
 func extractBinary(archivePath, destPath string) error {
+	if strings.EqualFold(filepath.Ext(archivePath), ".zip") {
+		return extractBinaryFromZip(archivePath, destPath)
+	}
+	return extractBinaryFromTarGz(archivePath, destPath)
+}
+
+func extractBinaryFromTarGz(archivePath, destPath string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -596,6 +643,48 @@ func extractBinary(archivePath, destPath string) error {
 			return nil
 		}
 	}
+	return fmt.Errorf("binary not found in archive")
+}
+
+func extractBinaryFromZip(archivePath, destPath string) error {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip archive: %w", err)
+	}
+	defer zr.Close()
+
+	for _, file := range zr.File {
+		name := filepath.Base(file.Name)
+		if name != "bv" && name != "bv.exe" {
+			continue
+		}
+
+		src, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("failed to open zipped binary: %w", err)
+		}
+
+		out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		if err != nil {
+			src.Close()
+			return fmt.Errorf("failed to create binary: %w", err)
+		}
+
+		_, copyErr := io.Copy(out, src)
+		srcCloseErr := src.Close()
+		closeErr := out.Close()
+		if copyErr != nil {
+			return fmt.Errorf("failed to extract binary: %w", copyErr)
+		}
+		if srcCloseErr != nil {
+			return fmt.Errorf("failed to close zipped binary: %w", srcCloseErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("failed to flush extracted binary: %w", closeErr)
+		}
+		return nil
+	}
+
 	return fmt.Errorf("binary not found in archive")
 }
 
@@ -658,6 +747,25 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	var checksums map[string]string
+	checksumAsset := release.FindChecksumAsset()
+	if checksumAsset != nil {
+		checksumPath := filepath.Join(tmpDir, "checksums.txt")
+		if err := downloadFile(checksumAsset.BrowserDownloadURL, checksumPath, checksumAsset.Size); err != nil {
+			return nil, fmt.Errorf("checksum download failed: %w", err)
+		}
+
+		var err error
+		checksums, err = parseChecksums(checksumPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse checksums: %w", err)
+		}
+
+		if checkedAsset := release.findPlatformAssetWithChecksum(checksums); checkedAsset != nil {
+			asset = checkedAsset
+		}
+	}
+
 	// Download archive
 	assetName, err := safeAssetName(asset.Name)
 	if err != nil {
@@ -669,19 +777,7 @@ func PerformUpdate(release *Release, skipConfirm bool) (*UpdateResult, error) {
 		return nil, fmt.Errorf("download failed: %w", err)
 	}
 
-	// Download and verify checksum
-	checksumAsset := release.FindChecksumAsset()
 	if checksumAsset != nil {
-		checksumPath := filepath.Join(tmpDir, "checksums.txt")
-		if err := downloadFile(checksumAsset.BrowserDownloadURL, checksumPath, checksumAsset.Size); err != nil {
-			return nil, fmt.Errorf("checksum download failed: %w", err)
-		}
-
-		checksums, err := parseChecksums(checksumPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse checksums: %w", err)
-		}
-
 		expectedHash, ok := checksums[asset.Name]
 		if !ok {
 			return nil, fmt.Errorf("no checksum found for %s", asset.Name)

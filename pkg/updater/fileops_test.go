@@ -2,6 +2,7 @@ package updater
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"os"
@@ -107,6 +108,42 @@ func TestExtractBinary_FromArchive(t *testing.T) {
 	}
 	if err := gzw.Close(); err != nil {
 		t.Fatalf("close gzip: %v", err)
+	}
+
+	if err := os.WriteFile(archivePath, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	if err := extractBinary(archivePath, destPath); err != nil {
+		t.Fatalf("extractBinary failed: %v", err)
+	}
+
+	got, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("read extracted: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload mismatch: got %q want %q", got, payload)
+	}
+}
+
+func TestExtractBinary_FromZipArchive(t *testing.T) {
+	tmpDir := t.TempDir()
+	archivePath := filepath.Join(tmpDir, "bv.zip")
+	destPath := filepath.Join(tmpDir, "bv.exe")
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("nested/bv.exe")
+	if err != nil {
+		t.Fatalf("create zip entry: %v", err)
+	}
+	payload := []byte("fake-windows-binary")
+	if _, err := w.Write(payload); err != nil {
+		t.Fatalf("write zip payload: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
 	}
 
 	if err := os.WriteFile(archivePath, buf.Bytes(), 0o644); err != nil {
