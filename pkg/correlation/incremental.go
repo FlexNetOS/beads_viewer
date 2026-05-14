@@ -82,9 +82,7 @@ func (ic *IncrementalCorrelator) GenerateReportWithDetails(beads []BeadInfo, opt
 
 	// Check cache
 	if cached, ok := ic.cache.Get(key); ok {
-		ic.mu.Lock()
-		ic.hits++
-		ic.mu.Unlock()
+		ic.recordCacheHit()
 		return &IncrementalUpdateResult{
 			Report:         cached,
 			WasIncremental: true,
@@ -97,9 +95,7 @@ func (ic *IncrementalCorrelator) GenerateReportWithDetails(beads []BeadInfo, opt
 	if existingReport != nil && existingReport.LatestCommitSHA != "" {
 		result, err := ic.tryIncrementalUpdate(existingReport, beads, opts)
 		if err == nil && result != nil {
-			ic.mu.Lock()
-			ic.increments++
-			ic.mu.Unlock()
+			ic.recordIncrementalUpdate()
 			ic.cache.Put(key, result.Report)
 			return result, nil
 		}
@@ -107,10 +103,7 @@ func (ic *IncrementalCorrelator) GenerateReportWithDetails(beads []BeadInfo, opt
 	}
 
 	// Full refresh
-	ic.mu.Lock()
-	ic.misses++
-	ic.refreshes++
-	ic.mu.Unlock()
+	ic.recordFullRefresh()
 
 	report, err := ic.correlator.GenerateReport(beads, opts)
 	if err != nil {
@@ -124,6 +117,35 @@ func (ic *IncrementalCorrelator) GenerateReportWithDetails(beads []BeadInfo, opt
 		WasIncremental: false,
 		RefreshReason:  "no suitable cached report for incremental update",
 	}, nil
+}
+
+func (ic *IncrementalCorrelator) recordCacheHit() {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+
+	ic.hits++
+}
+
+func (ic *IncrementalCorrelator) recordIncrementalUpdate() {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+
+	ic.increments++
+}
+
+func (ic *IncrementalCorrelator) recordFullRefresh() {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+
+	ic.misses++
+	ic.refreshes++
+}
+
+func (ic *IncrementalCorrelator) statsSnapshot() (hits, misses, increments, refreshes int64) {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+
+	return ic.hits, ic.misses, ic.increments, ic.refreshes
 }
 
 // findExistingReport looks for a cached report that can be incrementally updated
@@ -471,13 +493,7 @@ func (ic *IncrementalCorrelator) InvalidateCache() {
 
 // CacheStats returns cache and incremental update statistics
 func (ic *IncrementalCorrelator) CacheStats() IncrementalCorrelatorStats {
-	ic.mu.Lock()
-	hits := ic.hits
-	misses := ic.misses
-	increments := ic.increments
-	refreshes := ic.refreshes
-	ic.mu.Unlock()
-
+	hits, misses, increments, refreshes := ic.statsSnapshot()
 	cacheStats := ic.cache.Stats()
 
 	var hitRate float64

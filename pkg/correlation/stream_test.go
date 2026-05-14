@@ -269,6 +269,43 @@ func TestBatchFileStatsExtractor_CacheHit(t *testing.T) {
 	}
 }
 
+func TestBatchFileStatsExtractor_CacheHitReturnsCopy(t *testing.T) {
+	b := NewBatchFileStatsExtractor("/tmp/test")
+	b.cache["abc123"] = []FileChange{{Path: "cached.go", Action: "M"}}
+
+	result, err := b.ExtractBatch([]string{"abc123"})
+	if err != nil {
+		t.Fatalf("ExtractBatch failed: %v", err)
+	}
+	result["abc123"][0].Path = "mutated.go"
+
+	result, err = b.ExtractBatch([]string{"abc123"})
+	if err != nil {
+		t.Fatalf("ExtractBatch failed: %v", err)
+	}
+	if got := result["abc123"][0].Path; got != "cached.go" {
+		t.Fatalf("cached path = %s, want cached.go", got)
+	}
+}
+
+func TestBatchFileStatsExtractor_StoredBatchReturnsCopy(t *testing.T) {
+	b := NewBatchFileStatsExtractor("/tmp/test")
+	result := make(map[string][]FileChange)
+
+	b.storeBatchResult(result, map[string][]FileChange{
+		"abc123": {{Path: "cached.go", Action: "M"}},
+	})
+	result["abc123"][0].Path = "mutated.go"
+
+	result, err := b.ExtractBatch([]string{"abc123"})
+	if err != nil {
+		t.Fatalf("ExtractBatch failed: %v", err)
+	}
+	if got := result["abc123"][0].Path; got != "cached.go" {
+		t.Fatalf("cached path = %s, want cached.go", got)
+	}
+}
+
 func TestStreamOptions_Defaults(t *testing.T) {
 	opts := StreamOptions{}
 

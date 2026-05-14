@@ -366,33 +366,26 @@ func NewBatchFileStatsExtractor(repoPath string) *BatchFileStatsExtractor {
 // SetBatchSize sets the batch size for git operations
 func (b *BatchFileStatsExtractor) SetBatchSize(size int) {
 	if size > 0 {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+
 		b.batchSize = size
 	}
 }
 
 // ExtractBatch extracts file changes for multiple commit SHAs in a batch
 func (b *BatchFileStatsExtractor) ExtractBatch(shas []string) (map[string][]FileChange, error) {
-	result := make(map[string][]FileChange)
-
-	// Check cache first
-	b.mu.Lock()
-	var uncached []string
-	for _, sha := range shas {
-		if files, ok := b.cache[sha]; ok {
-			result[sha] = files
-		} else {
-			uncached = append(uncached, sha)
-		}
-	}
-	b.mu.Unlock()
+	result, uncached := b.splitCached(shas)
 
 	if len(uncached) == 0 {
 		return result, nil
 	}
 
+	batchSize := b.currentBatchSize()
+
 	// Process in batches
-	for i := 0; i < len(uncached); i += b.batchSize {
-		end := i + b.batchSize
+	for i := 0; i < len(uncached); i += batchSize {
+		end := i + batchSize
 		if end > len(uncached) {
 			end = len(uncached)
 		}
@@ -404,15 +397,57 @@ func (b *BatchFileStatsExtractor) ExtractBatch(shas []string) (map[string][]File
 		}
 
 		// Merge results and update cache
-		b.mu.Lock()
-		for sha, files := range batchResult {
-			result[sha] = files
-			b.cache[sha] = files
-		}
-		b.mu.Unlock()
+		b.storeBatchResult(result, batchResult)
 	}
 
 	return result, nil
+}
+
+func (b *BatchFileStatsExtractor) currentBatchSize() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.batchSize
+}
+
+func (b *BatchFileStatsExtractor) splitCached(shas []string) (map[string][]FileChange, []string) {
+	result := make(map[string][]FileChange)
+	var uncached []string
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, sha := range shas {
+		files, ok := b.cache[sha]
+		if !ok {
+			uncached = append(uncached, sha)
+			continue
+		}
+
+		result[sha] = cloneFileChanges(files)
+	}
+
+	return result, uncached
+}
+
+func (b *BatchFileStatsExtractor) storeBatchResult(result map[string][]FileChange, batchResult map[string][]FileChange) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for sha, files := range batchResult {
+		result[sha] = cloneFileChanges(files)
+		b.cache[sha] = cloneFileChanges(files)
+	}
+}
+
+func cloneFileChanges(files []FileChange) []FileChange {
+	if len(files) == 0 {
+		return nil
+	}
+
+	copied := make([]FileChange, len(files))
+	copy(copied, files)
+	return copied
 }
 
 // extractBatchFiles extracts files for a batch of commits using a single git command
@@ -527,6 +562,7 @@ func isHexString(s string) bool {
 // ClearCache clears the file stats cache
 func (b *BatchFileStatsExtractor) ClearCache() {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	b.cache = make(map[string][]FileChange)
-	b.mu.Unlock()
 }
