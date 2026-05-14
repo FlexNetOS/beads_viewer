@@ -6,7 +6,11 @@ All notable changes to **Beads Viewer (`bv`)** are documented here. Versions are
 
 ## [Unreleased]
 
-No unreleased changes.
+### Build & Release
+- Align GoReleaser archive names with README `latest/download` aliases, publish Windows as a zip archive, and update the GoReleaser config to v2 syntax.
+
+### Tests
+- Harden background worker tests by waiting on worker state instead of fixed sleeps.
 
 ---
 
