@@ -881,7 +881,6 @@ func (w *BackgroundWorker) ForceRefresh() {
 		return
 	}
 
-	w.lastHash = ""
 	w.forceNext = true
 
 	if w.state == WorkerProcessing {
@@ -1018,6 +1017,8 @@ func (w *BackgroundWorker) process() {
 	}
 	w.state = WorkerProcessing
 	w.dirty = false
+	forceNext := w.forceNext
+	w.forceNext = false
 	now := time.Now()
 	w.processingStart = now
 	w.lastHeartbeat = now
@@ -1037,7 +1038,7 @@ func (w *BackgroundWorker) process() {
 
 	// Load and build snapshot
 	// Returns nil if content unchanged (dedup) or on error
-	snapshot := w.buildSnapshot()
+	snapshot := w.buildSnapshot(forceNext)
 
 	w.mu.Lock()
 	// If we recovered while processing, ignore this stale result.
@@ -1062,6 +1063,7 @@ func (w *BackgroundWorker) process() {
 	var version uint64
 	if snapshot != nil {
 		swapStart := time.Now()
+		w.lastHash = snapshot.DataHash
 		w.snapshot = snapshot
 		swapLatency = time.Since(swapStart)
 		version = w.metrics.snapshotVersion.Add(1)
@@ -1292,7 +1294,7 @@ func (w *BackgroundWorker) maybeIdleGC(now time.Time) {
 // buildSnapshot loads data and constructs a new DataSnapshot.
 // This is called from the worker goroutine (NOT the UI thread).
 // Returns nil if beadsPath is empty, loading fails, or content is unchanged.
-func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
+func (w *BackgroundWorker) buildSnapshot(forceNext bool) *DataSnapshot {
 	if w.beadsPath == "" {
 		return nil
 	}
@@ -1409,14 +1411,9 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 	hash := analysis.ComputeDataHash(issues)
 
 	// Check if content is unchanged (dedup optimization)
-	w.mu.Lock()
-	forceNext := w.forceNext
-	if forceNext {
-		w.forceNext = false
-		w.lastHash = ""
-	}
+	w.mu.RLock()
 	lastHash := w.lastHash
-	w.mu.Unlock()
+	w.mu.RUnlock()
 
 	if !forceNext && hash == lastHash && lastHash != "" {
 		w.logEvent(LogLevelDebug, "snapshot_deduped", map[string]any{
@@ -1487,11 +1484,6 @@ func (w *BackgroundWorker) buildSnapshot() *DataSnapshot {
 
 	// Clear error on success
 	w.recordError(nil)
-
-	// Update lastHash for future dedup checks
-	w.mu.Lock()
-	w.lastHash = hash
-	w.mu.Unlock()
 
 	// Store hash in snapshot for external access
 	if snapshot != nil {

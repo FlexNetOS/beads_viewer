@@ -866,6 +866,71 @@ func TestBackgroundWorker_SnapshotHasDataHash(t *testing.T) {
 	}
 }
 
+func TestBackgroundWorker_BuildSnapshotDoesNotPublishHashBeforeSwap(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsPath := filepath.Join(tmpDir, "beads.jsonl")
+
+	content1 := `{"id":"test-1","title":"Initial","status":"open","priority":1,"issue_type":"task"}` + "\n"
+	if err := os.WriteFile(beadsPath, []byte(content1), 0644); err != nil {
+		t.Fatalf("Failed to write initial test file: %v", err)
+	}
+
+	worker, err := NewBackgroundWorker(WorkerConfig{
+		BeadsPath:     beadsPath,
+		DebounceDelay: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewBackgroundWorker failed: %v", err)
+	}
+	defer worker.Stop()
+
+	worker.TriggerRefresh()
+	waitForSnapshotVersion(t, worker, 1)
+
+	accepted := worker.GetSnapshot()
+	if accepted == nil {
+		t.Fatal("expected accepted initial snapshot")
+	}
+	acceptedHash := worker.LastHash()
+	if acceptedHash == "" {
+		t.Fatal("expected accepted initial hash")
+	}
+
+	content2 := `{"id":"test-1","title":"Changed","status":"open","priority":1,"issue_type":"task"}` + "\n"
+	if err := os.WriteFile(beadsPath, []byte(content2), 0644); err != nil {
+		t.Fatalf("Failed to write changed test file: %v", err)
+	}
+
+	worker.mu.Lock()
+	worker.forceNext = true
+	worker.mu.Unlock()
+
+	unaccepted := worker.buildSnapshot(false)
+	if unaccepted == nil {
+		t.Fatal("expected unaccepted changed snapshot")
+	}
+	defer loader.ReturnIssuePtrsToPool(unaccepted.pooledIssues)
+
+	if unaccepted.DataHash == "" {
+		t.Fatal("expected unaccepted snapshot DataHash")
+	}
+	if unaccepted.DataHash == acceptedHash {
+		t.Fatal("expected changed snapshot hash to differ from accepted hash")
+	}
+	if worker.GetSnapshot() != accepted {
+		t.Fatal("buildSnapshot should not swap the active snapshot")
+	}
+	if got := worker.LastHash(); got != acceptedHash {
+		t.Fatalf("LastHash changed before snapshot swap: got %q, want %q", got, acceptedHash)
+	}
+	worker.mu.RLock()
+	forceNext := worker.forceNext
+	worker.mu.RUnlock()
+	if !forceNext {
+		t.Fatal("buildSnapshot consumed a force-refresh flag that belongs to the next process run")
+	}
+}
+
 func TestWorkerError_String(t *testing.T) {
 	err := WorkerError{
 		Phase:   "load",
