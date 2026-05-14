@@ -92,20 +92,14 @@ func TestAggregateLoaderLoadAll(t *testing.T) {
 	}
 
 	// Check namespacing
-	foundAPIAuth1 := false
-	foundWebUI1 := false
+	issueIDs := make(map[string]bool, len(issues))
 	for _, issue := range issues {
-		if issue.ID == "api-AUTH-1" {
-			foundAPIAuth1 = true
-		}
-		if issue.ID == "web-UI-1" {
-			foundWebUI1 = true
-		}
+		issueIDs[issue.ID] = true
 	}
-	if !foundAPIAuth1 {
+	if !issueIDs["api-AUTH-1"] {
 		t.Error("Expected to find api-AUTH-1 (namespaced)")
 	}
-	if !foundWebUI1 {
+	if !issueIDs["web-UI-1"] {
 		t.Error("Expected to find web-UI-1 (namespaced)")
 	}
 }
@@ -158,6 +152,67 @@ func TestAggregateLoaderPartialFailure(t *testing.T) {
 	}
 	if webResult == nil || webResult.Error == nil {
 		t.Error("web repo should have error (missing)")
+	}
+}
+
+func TestAggregateLoaderAllReposFailed(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := &workspace.Config{
+		Repos: []workspace.RepoConfig{
+			{Name: "api", Path: "missing-api", Prefix: "api-"},
+			{Name: "web", Path: "missing-web", Prefix: "web-"},
+		},
+	}
+
+	loader := workspace.NewAggregateLoader(config, tmpDir)
+	issues, results, err := loader.LoadAll(context.Background())
+
+	if err == nil {
+		t.Fatal("LoadAll() should error when every enabled repo fails")
+	}
+	if issues != nil {
+		t.Errorf("issues = %v, want nil on all-failed workspace", issues)
+	}
+	if len(results) != 2 {
+		t.Fatalf("len(results) = %d, want 2", len(results))
+	}
+	for _, result := range results {
+		if result.Error == nil {
+			t.Errorf("repo %q should have an error", result.RepoName)
+		}
+	}
+}
+
+func TestAggregateLoaderEmptySuccessfulRepo(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	emptyRepo := filepath.Join(tmpDir, "empty")
+	if err := os.MkdirAll(emptyRepo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createTestBeadsFile(t, emptyRepo, nil)
+
+	config := &workspace.Config{
+		Repos: []workspace.RepoConfig{
+			{Name: "empty", Path: "empty", Prefix: "empty-"},
+		},
+	}
+
+	loader := workspace.NewAggregateLoader(config, tmpDir)
+	issues, results, err := loader.LoadAll(context.Background())
+
+	if err != nil {
+		t.Fatalf("LoadAll() should not error for an empty successful repo: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Errorf("len(issues) = %d, want 0", len(issues))
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].Error != nil {
+		t.Errorf("empty repo should load successfully, got %v", results[0].Error)
 	}
 }
 

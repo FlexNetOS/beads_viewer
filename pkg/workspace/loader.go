@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/sync/errgroup"
 
@@ -58,7 +59,7 @@ func (l *AggregateLoader) SetLogger(logger *log.Logger) {
 
 // LoadAll loads issues from all enabled repositories in the workspace.
 // Returns the merged list of issues with namespaced IDs.
-// Failed repos are logged but don't break the overall loading process.
+// Failed repos are logged and tolerated as long as at least one repo loads.
 func (l *AggregateLoader) LoadAll(ctx context.Context) ([]model.Issue, []LoadResult, error) {
 	if l.config == nil {
 		return nil, nil, fmt.Errorf("workspace config is nil")
@@ -78,13 +79,24 @@ func (l *AggregateLoader) LoadAll(ctx context.Context) ([]model.Issue, []LoadRes
 
 	// Merge all successfully loaded issues
 	var allIssues []model.Issue
+	var failedRepoNames []string
+	var firstRepoErr error
 	for _, result := range results {
 		if result.Error != nil {
 			// Log but continue - individual repo failures don't break the whole load
 			l.logRepoError(result.RepoName, result.Error)
+			failedRepoNames = append(failedRepoNames, result.RepoName)
+			if firstRepoErr == nil {
+				firstRepoErr = result.Error
+			}
 			continue
 		}
 		allIssues = append(allIssues, result.Issues...)
+	}
+
+	if len(failedRepoNames) == len(results) {
+		return nil, results, fmt.Errorf("all %d enabled repositories failed to load (%s): %w",
+			len(results), strings.Join(failedRepoNames, ", "), firstRepoErr)
 	}
 
 	return allIssues, results, nil
