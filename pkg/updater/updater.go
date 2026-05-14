@@ -149,6 +149,11 @@ func checkForUpdates(client *http.Client, url string) (string, string, error) {
 	return "", "", nil
 }
 
+// IsNewerThanCurrent reports whether candidate is newer than this binary's version.
+func IsNewerThanCurrent(candidate string) bool {
+	return compareVersions(candidate, version.Version) > 0
+}
+
 // compareVersions compares semver-ish strings with optional leading 'v' and optional pre-release
 // suffix (e.g., v1.2.3-alpha). Pre-release versions are considered LOWER than their corresponding
 // release version per SemVer spec, EXCEPT for development builds.

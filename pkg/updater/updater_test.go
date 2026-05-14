@@ -255,6 +255,15 @@ func TestCompareVersions_DevBuilds(t *testing.T) {
 	}
 }
 
+func TestIsNewerThanCurrent(t *testing.T) {
+	if !IsNewerThanCurrent("v99.0.0") {
+		t.Fatal("v99.0.0 should be newer than the test binary version")
+	}
+	if IsNewerThanCurrent("v0.0.0") {
+		t.Fatal("v0.0.0 should not be newer than the test binary version")
+	}
+}
+
 // ============================================================================
 // Release struct tests
 // ============================================================================

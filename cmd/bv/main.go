@@ -1849,9 +1849,8 @@ func main() {
 				os.Exit(1)
 			}
 
-			// Check if update is needed
-			available, newVersion, _, _ := updater.CheckUpdateAvailable()
-			if !available {
+			newVersion := release.TagName
+			if !updater.IsNewerThanCurrent(newVersion) {
 				fmt.Printf("bv is already up to date (version %s)\n", version.Version)
 				os.Exit(0)
 			}
