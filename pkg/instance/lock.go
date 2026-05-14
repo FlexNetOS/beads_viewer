@@ -40,6 +40,8 @@ type Lock struct {
 // LockFileName is the name of the lock file created in .beads directory.
 const LockFileName = ".bv.lock"
 
+const unreadableLockTakeoverAge = 2 * time.Second
+
 // NewLock creates a new instance lock for the given beads directory.
 // If this is the first instance, it creates and holds the lock.
 // If another instance already holds the lock, it returns a Lock with isFirst=false.
@@ -164,7 +166,13 @@ func (l *Lock) checkStale() {
 	// Re-read the lock file to get current state (another goroutine may have taken over)
 	existing, err := readLockFile(l.path)
 	if err != nil {
-		// Can't read lock file - might have been deleted
+		// A recent unreadable file may be a process between O_EXCL create and
+		// JSON write. Only recover older unreadable files that are likely left
+		// behind by a crash or interrupted write.
+		if !shouldTakeOverUnreadableLock(l.path) {
+			return
+		}
+		l.takeOverStaleLock()
 		return
 	}
 	currentPID := existing.PID
@@ -176,8 +184,20 @@ func (l *Lock) checkStale() {
 		return
 	}
 
-	// Stale lock detected - attempt atomic takeover using rename
-	// This avoids the race condition of delete + create with O_EXCL
+	l.takeOverStaleLock()
+}
+
+func shouldTakeOverUnreadableLock(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) >= unreadableLockTakeoverAge
+}
+
+func (l *Lock) takeOverStaleLock() {
+	// Attempt atomic takeover using rename.
+	// This avoids the race condition of delete + create with O_EXCL.
 	tmpPath := fmt.Sprintf("%s.%d", l.path, os.Getpid())
 	ownerID, err := newLockOwnerID()
 	if err != nil {

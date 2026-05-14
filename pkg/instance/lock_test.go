@@ -288,8 +288,35 @@ func TestNewLock_CorruptedLockFile(t *testing.T) {
 	}
 	defer lock.Release()
 
-	// With corrupted data (no PID), should try to take over
-	// The behavior depends on whether it can detect the "owner" is dead
+	if lock.IsFirstInstance() {
+		t.Fatal("recent corrupted lock should not be taken over")
+	}
+}
+
+func TestNewLock_StaleCorruptedLockFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	lockPath := filepath.Join(tmpDir, LockFileName)
+	if err := os.WriteFile(lockPath, []byte("not valid json"), 0644); err != nil {
+		t.Fatalf("writing corrupted lock: %v", err)
+	}
+	staleTime := time.Now().Add(-unreadableLockTakeoverAge - time.Second)
+	if err := os.Chtimes(lockPath, staleTime, staleTime); err != nil {
+		t.Fatalf("aging corrupted lock: %v", err)
+	}
+
+	lock, err := NewLock(tmpDir)
+	if err != nil {
+		t.Fatalf("NewLock should not fail on stale corrupted lock: %v", err)
+	}
+	defer lock.Release()
+
+	if !lock.IsFirstInstance() {
+		t.Fatal("stale corrupted lock should be taken over")
+	}
+	if lock.HolderPID() != os.Getpid() {
+		t.Fatalf("expected holder PID %d after takeover, got %d", os.Getpid(), lock.HolderPID())
+	}
 }
 
 func TestNewLock_EmptyLockFile(t *testing.T) {
@@ -307,6 +334,36 @@ func TestNewLock_EmptyLockFile(t *testing.T) {
 		t.Fatalf("NewLock should not fail on empty lock: %v", err)
 	}
 	defer lock.Release()
+
+	if lock.IsFirstInstance() {
+		t.Fatal("recent empty lock should not be taken over")
+	}
+}
+
+func TestNewLock_StaleEmptyLockFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	lockPath := filepath.Join(tmpDir, LockFileName)
+	if err := os.WriteFile(lockPath, []byte{}, 0644); err != nil {
+		t.Fatalf("writing empty lock: %v", err)
+	}
+	staleTime := time.Now().Add(-unreadableLockTakeoverAge - time.Second)
+	if err := os.Chtimes(lockPath, staleTime, staleTime); err != nil {
+		t.Fatalf("aging empty lock: %v", err)
+	}
+
+	lock, err := NewLock(tmpDir)
+	if err != nil {
+		t.Fatalf("NewLock should not fail on stale empty lock: %v", err)
+	}
+	defer lock.Release()
+
+	if !lock.IsFirstInstance() {
+		t.Fatal("stale empty lock should be taken over")
+	}
+	if lock.HolderPID() != os.Getpid() {
+		t.Fatalf("expected holder PID %d after takeover, got %d", os.Getpid(), lock.HolderPID())
+	}
 }
 
 func TestNewLock_ConcurrentStaleTakeover(t *testing.T) {
