@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -316,7 +317,8 @@ func TestBackgroundWorker_ContentHashDedup(t *testing.T) {
 
 	// First refresh should build snapshot and set hash
 	worker.TriggerRefresh()
-	time.Sleep(200 * time.Millisecond)
+	waitForSnapshotVersion(t, worker, 1)
+	waitForWorkerIdle(t, worker, 1)
 
 	snapshot1 := worker.GetSnapshot()
 	if snapshot1 == nil {
@@ -330,7 +332,7 @@ func TestBackgroundWorker_ContentHashDedup(t *testing.T) {
 
 	// Second refresh with same content should be deduped (snapshot unchanged)
 	worker.TriggerRefresh()
-	time.Sleep(200 * time.Millisecond)
+	waitForWorkerIdle(t, worker, 2)
 
 	snapshot2 := worker.GetSnapshot()
 	hash2 := worker.LastHash()
@@ -368,7 +370,8 @@ func TestBackgroundWorker_ContentHashChanges(t *testing.T) {
 
 	// First refresh
 	worker.TriggerRefresh()
-	time.Sleep(200 * time.Millisecond)
+	waitForSnapshotVersion(t, worker, 1)
+	waitForWorkerIdle(t, worker, 1)
 
 	snapshot1 := worker.GetSnapshot()
 	if snapshot1 == nil {
@@ -384,7 +387,8 @@ func TestBackgroundWorker_ContentHashChanges(t *testing.T) {
 
 	// Second refresh with different content should rebuild
 	worker.TriggerRefresh()
-	time.Sleep(200 * time.Millisecond)
+	waitForSnapshotVersion(t, worker, 2)
+	waitForWorkerIdle(t, worker, 2)
 
 	snapshot2 := worker.GetSnapshot()
 	if snapshot2 == nil {
@@ -1176,12 +1180,18 @@ func TestBackgroundWorker_ConcurrentTrigger(t *testing.T) {
 
 	// Fire multiple TriggerRefresh calls concurrently
 	// The fix ensures only one process() runs at a time, others mark dirty
+	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
-		go worker.TriggerRefresh()
+		wg.Add(1)
+		go func(_ int) {
+			defer wg.Done()
+			worker.TriggerRefresh()
+		}(i)
 	}
+	wg.Wait()
 
-	// Wait for processing to complete
-	time.Sleep(400 * time.Millisecond)
+	waitForSnapshotVersion(t, worker, 1)
+	waitForWorkerIdle(t, worker, 1)
 
 	// Worker should still be in idle state (not stuck in processing)
 	if worker.State() != WorkerIdle {
@@ -1401,6 +1411,37 @@ func waitForSnapshotVersion(t *testing.T, worker *BackgroundWorker, minVersion u
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timeout waiting for snapshot version %d (got %d)", minVersion, worker.Metrics().SnapshotVersion)
+}
+
+func waitForWorkerIdle(t *testing.T, worker *BackgroundWorker, minProcessingCount uint64) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		metrics := worker.Metrics()
+		state, dirty := workerStateAndDirty(worker)
+		if state == WorkerIdle && !dirty && metrics.ProcessingCount >= minProcessingCount {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	metrics := worker.Metrics()
+	state, dirty := workerStateAndDirty(worker)
+	t.Fatalf(
+		"timeout waiting for idle worker after %d processes (state=%v dirty=%v processes=%d snapshots=%d)",
+		minProcessingCount,
+		state,
+		dirty,
+		metrics.ProcessingCount,
+		metrics.SnapshotVersion,
+	)
+}
+
+func workerStateAndDirty(worker *BackgroundWorker) (WorkerState, bool) {
+	worker.mu.RLock()
+	defer worker.mu.RUnlock()
+	return worker.state, worker.dirty
 }
 
 func TestBackgroundWorker_MalformedJSON_WarnsAndContinues(t *testing.T) {

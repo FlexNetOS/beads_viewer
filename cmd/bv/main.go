@@ -1429,7 +1429,11 @@ func main() {
 	// Accepts EITHER int 0-100 (percent) OR float 0.0-1.0 (fraction). The
 	// sibling --relations-threshold uses fraction; this dual form removes the
 	// silent-failure trap when an agent or user reaches for the wrong unit.
-	relatedMinRelevanceFlag := newPercentOrFraction("related-min-relevance", 20)
+	relatedMinRelevanceFlag, flagErr := newPercentOrFraction("related-min-relevance", 20)
+	if flagErr != nil {
+		fmt.Fprintf(os.Stderr, "internal flag setup error: %v\n", flagErr)
+		os.Exit(1)
+	}
 	flag.Var(relatedMinRelevanceFlag, "related-min-relevance", "Minimum relevance score for related work (int 0-100 percent OR float 0.0-1.0 fraction)")
 	relatedMaxResults := flag.Int("related-max-results", 10, "Max results per category for related work")
 	relatedIncludeClosed := flag.Bool("related-include-closed", false, "Include closed beads in related work results")

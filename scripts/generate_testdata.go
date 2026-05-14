@@ -113,7 +113,15 @@ func addRealisticContent(issues []model.Issue, datasetDesc string) {
 	}
 
 	for i := range issues {
-		issues[i].Title = fmt.Sprintf("[%s] %s #%d", datasetDesc[:6], titles[i%len(titles)], i)
+		issues[i].Title = fmt.Sprintf("[%s] %s #%d", datasetDescPrefix(datasetDesc), titles[i%len(titles)], i)
 		issues[i].Description = descriptions[i%len(descriptions)]
 	}
+}
+
+func datasetDescPrefix(desc string) string {
+	runes := []rune(desc)
+	if len(runes) <= 6 {
+		return desc
+	}
+	return string(runes[:6])
 }

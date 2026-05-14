@@ -19,11 +19,7 @@ import (
 // fail on the other (e.g. "0.5" parsed as int "0"). Accepting both forms with
 // a structured error mentioning each removes that footgun.
 type percentOrFraction struct {
-	val int  // canonical: 0-100 percent
-	set bool // true once Set has been called (so we know whether to use defaultVal)
-	// defaultVal is the int 0-100 value used when the flag is not provided on
-	// the command line.
-	defaultVal int
+	val int // canonical: 0-100 percent
 	// flagName is the user-facing flag (e.g. "related-min-relevance"); used
 	// only in error messages so they reference the exact flag the user typed.
 	flagName string
@@ -31,20 +27,19 @@ type percentOrFraction struct {
 
 // newPercentOrFraction constructs a flag value with a percent-int default.
 // Both `defaultPercent` and any user-supplied value go through the same
-// validation — passing an out-of-range default is a programmer error.
-func newPercentOrFraction(flagName string, defaultPercent int) *percentOrFraction {
+// validation; an out-of-range default is reported to the caller.
+func newPercentOrFraction(flagName string, defaultPercent int) (*percentOrFraction, error) {
 	if defaultPercent < 0 || defaultPercent > 100 {
-		panic(fmt.Sprintf("percentOrFraction: default %d out of range (expected 0-100) for --%s", defaultPercent, flagName))
+		return nil, fmt.Errorf("percentOrFraction: default %d out of range (expected 0-100) for --%s", defaultPercent, flagName)
 	}
 	return &percentOrFraction{
-		val:        defaultPercent,
-		defaultVal: defaultPercent,
-		flagName:   flagName,
-	}
+		val:      defaultPercent,
+		flagName: flagName,
+	}, nil
 }
 
-// Value returns the int 0-100 percent representation. Use this — not the
-// String() representation — for downstream consumers expecting an int.
+// Value returns the int 0-100 percent representation. Use this, not the
+// String() representation, for downstream consumers expecting an int.
 func (p *percentOrFraction) Value() int {
 	if p == nil {
 		return 0
@@ -84,9 +79,8 @@ func (p *percentOrFraction) Set(s string) error {
 		if f < 0.0 || f > 1.0 {
 			return fmt.Errorf("--%s: float %g out of range (expected 0.0-1.0 fraction; for percent use int 0-100)", p.flagName, f)
 		}
-		// Round to nearest int percent so 0.235 → 24%, 0.999 → 100%.
+		// Round to nearest int percent so 0.235 becomes 24%, 0.999 becomes 100%.
 		p.val = int(f*100 + 0.5)
-		p.set = true
 		return nil
 	}
 	n, err := strconv.Atoi(s)
@@ -97,6 +91,5 @@ func (p *percentOrFraction) Set(s string) error {
 		return fmt.Errorf("--%s: int %d out of range (expected 0-100 percent; for fraction use float 0.0-1.0)", p.flagName, n)
 	}
 	p.val = n
-	p.set = true
 	return nil
 }

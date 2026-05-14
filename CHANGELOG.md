@@ -20,7 +20,7 @@ Patch release focused on dependency freshness, vendored reproducibility, and rel
 - Update Rust/WASM lockfiles and move `bv-graph-wasm` to `getrandom` 0.4 with the `wasm_js` feature.
 
 ### Build & Release
-- Bump fallback, Nix, README, and changelog release metadata to `v0.16.1`.
+- Refresh fallback, Nix, README latest-download aliases, and changelog release metadata for `v0.16.1`.
 - Restrict ACFS notification workflow triggers to `main`.
 - Keep transient `.beads/.write.lock` files ignored and out of release commits.
 
