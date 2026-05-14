@@ -35,6 +35,7 @@ beads_viewer_graph*.html
 test-results/
 
 # Nested beads state
+.beads/.write.lock
 pkg/ui/.beads/
 
 # Large benchmark test data (generated)

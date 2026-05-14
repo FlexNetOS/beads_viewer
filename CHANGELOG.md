@@ -22,6 +22,7 @@ Patch release focused on dependency freshness, vendored reproducibility, and rel
 ### Build & Release
 - Bump fallback, Nix, README, and changelog release metadata to `v0.16.1`.
 - Restrict ACFS notification workflow triggers to `main`.
+- Keep transient `.beads/.write.lock` files ignored and out of release commits.
 
 ---
 
