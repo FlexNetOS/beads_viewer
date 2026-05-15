@@ -374,6 +374,26 @@ func TestVerifyCloudflareDeployment_IssueCountMismatchReturnsError(t *testing.T)
 	}
 }
 
+func TestVerifyCloudflareDeployment_ZeroIssueCountMismatchReturnsError(t *testing.T) {
+	requireCurl(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/data/meta.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"issue_count": 1}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	err := VerifyCloudflareDeployment(server.URL, 0, time.Second)
+	if err == nil {
+		t.Fatal("Expected VerifyCloudflareDeployment to fail when empty export verifies against stale live data")
+	}
+	if !strings.Contains(err.Error(), "issue count mismatch") {
+		t.Fatalf("Unexpected verification error: %v", err)
+	}
+}
+
 func TestVerifyCloudflareDeployment_Success(t *testing.T) {
 	requireCurl(t)
 

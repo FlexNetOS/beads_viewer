@@ -739,10 +739,11 @@ func (w *Wizard) OfferPreview() (string, error) {
 
 // PerformDeploy deploys the bundle to the configured target.
 func (w *Wizard) PerformDeploy() (*WizardResult, error) {
-	return w.PerformDeployWithIssueCount(0)
+	return w.PerformDeployWithIssueCount(skipDeploymentIssueCountVerification)
 }
 
 // PerformDeployWithIssueCount deploys the bundle and verifies the expected issue count.
+// Pass a negative value to skip live count verification.
 func (w *Wizard) PerformDeployWithIssueCount(expectedIssueCount int) (*WizardResult, error) {
 	fmt.Println("Step 7: Deploy")
 	fmt.Println("────────────────────────────")

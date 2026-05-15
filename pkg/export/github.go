@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+const skipDeploymentIssueCountVerification = -1
+
 // GitHubDeployConfig configures GitHub Pages deployment.
 type GitHubDeployConfig struct {
 	// RepoName is the desired repository name (without owner)
@@ -923,8 +925,9 @@ func VerifyGitHubPagesDeployment(pagesURL string, expectedIssueCount int, timeou
 			continue
 		}
 
-		// Check issue count matches expected
-		if expectedIssueCount > 0 && meta.IssueCount != expectedIssueCount {
+		// Check issue count matches expected. Zero is a valid expected
+		// count for empty exports; negative disables count comparison.
+		if expectedIssueCount >= 0 && meta.IssueCount != expectedIssueCount {
 			return fmt.Errorf("deployment verification issue count mismatch: live site shows %d issues, expected %d",
 				meta.IssueCount, expectedIssueCount)
 		}
@@ -971,8 +974,9 @@ func DeployToGitHubPagesWithFallback(config GitHubDeployConfig, expectedIssueCou
 		}
 	}
 
-	// Verify deployment if we have expected issue count
-	if expectedIssueCount > 0 {
+	// Verify deployment if we have an expected issue count. Zero is valid for
+	// empty exports; a negative sentinel means the caller opted out.
+	if expectedIssueCount >= 0 {
 		if err := VerifyGitHubPagesDeployment(result.PagesURL, expectedIssueCount, 90*time.Second); err != nil {
 			return nil, fmt.Errorf("verify github pages deployment: %w", err)
 		}

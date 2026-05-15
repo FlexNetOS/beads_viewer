@@ -640,8 +640,9 @@ func VerifyCloudflareDeployment(deployURL string, expectedIssueCount int, timeou
 			continue
 		}
 
-		// Check issue count matches expected
-		if expectedIssueCount > 0 && meta.IssueCount != expectedIssueCount {
+		// Check issue count matches expected. Zero is a valid expected
+		// count for empty exports; negative disables count comparison.
+		if expectedIssueCount >= 0 && meta.IssueCount != expectedIssueCount {
 			return fmt.Errorf("deployment verification issue count mismatch: live site shows %d issues, expected %d",
 				meta.IssueCount, expectedIssueCount)
 		}
@@ -779,8 +780,9 @@ func DeployToCloudflareWithAutoCreate(config CloudflareDeployConfig, expectedIss
 		DeploymentID: deployID,
 	}
 
-	// 10. Verify deployment
-	if expectedIssueCount > 0 {
+	// 10. Verify deployment. Zero is valid for empty exports; a negative
+	// sentinel means the caller opted out.
+	if expectedIssueCount >= 0 {
 		if err := VerifyCloudflareDeployment(deployURL, expectedIssueCount, 30*time.Second); err != nil {
 			return nil, fmt.Errorf("verify cloudflare deployment: %w", err)
 		}
