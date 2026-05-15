@@ -312,7 +312,7 @@ func parseDeploymentID(output string) string {
 func SuggestProjectName(bundlePath string) string {
 	// Use the directory name
 	name := filepath.Base(bundlePath)
-	if name == "." || name == "/" || name == "" {
+	if isEmptyPathBase(name) {
 		// Get parent dir name
 		abs, err := filepath.Abs(bundlePath)
 		if err == nil {
@@ -321,12 +321,14 @@ func SuggestProjectName(bundlePath string) string {
 	}
 
 	// If it's bv-pages or similar, use parent project name
-	if name == "bv-pages" || name == "pages" || name == "docs" || name == "dist" {
+	if isGenericCloudflareOutputDir(name) {
 		abs, err := filepath.Abs(bundlePath)
 		if err == nil {
 			parent := filepath.Base(filepath.Dir(abs))
-			if parent != "" && parent != "." && parent != "/" {
+			if !isEmptyPathBase(parent) {
 				name = parent + "-pages"
+			} else {
+				name = ""
 			}
 		}
 	}
@@ -343,8 +345,20 @@ func SuggestProjectName(bundlePath string) string {
 	// Remove leading/trailing hyphens and collapse multiple hyphens
 	name = strings.Trim(name, "-")
 	name = cfMultipleHyphenRegex.ReplaceAllString(name, "-")
+	if name == "" {
+		return "beads-viewer-pages"
+	}
 
 	return name
+}
+
+func isGenericCloudflareOutputDir(name string) bool {
+	switch name {
+	case "bv-pages", "pages", "docs", "dist":
+		return true
+	default:
+		return false
+	}
 }
 
 // DeployToCloudflarePages performs a complete deployment to Cloudflare Pages.

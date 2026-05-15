@@ -195,6 +195,21 @@ func TestSuggestProjectName(t *testing.T) {
 			bundlePath: "/path/to/my---project",
 			want:       "my-project",
 		},
+		{
+			name:       "punctuation only falls back",
+			bundlePath: "/path/to/!!!",
+			want:       "beads-viewer-pages",
+		},
+		{
+			name:       "root path falls back",
+			bundlePath: string(filepath.Separator),
+			want:       "beads-viewer-pages",
+		},
+		{
+			name:       "generic output at filesystem root falls back",
+			bundlePath: string(filepath.Separator) + "dist",
+			want:       "beads-viewer-pages",
+		},
 	}
 
 	for _, tc := range tests {
