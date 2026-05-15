@@ -306,7 +306,14 @@ func InitAndPush(bundlePath string, repoFullName string, forceOverwrite bool) er
 	configCmd.Dir = bundlePath
 	_ = configCmd.Run() // Ignore errors - this is best-effort
 
-	// Push with force-with-lease for safety
+	// Push with force-with-lease for safety.
+	// Fetch first so the lease is tied to the remote main ref we observed during this deploy.
+	if hasContent {
+		if err := fetchRemoteBranch(bundlePath, "main"); err != nil {
+			return fmt.Errorf("preparing force-with-lease: %w", err)
+		}
+	}
+
 	fmt.Println("  -> Pushing to GitHub...")
 	pushArgs := []string{"push", "-u", "origin", "main"}
 	if hasContent {
@@ -317,23 +324,27 @@ func InitAndPush(bundlePath string, repoFullName string, forceOverwrite bool) er
 	pushCmd := exec.Command("git", pushArgs...)
 	pushCmd.Dir = bundlePath
 	if output, err := pushCmd.CombinedOutput(); err != nil {
-		// If force-with-lease fails, try regular force
-		// This handles: "cannot be resolved", "stale info", and other lease failures
-		outputStr := string(output)
-		if strings.Contains(outputStr, "cannot be resolved") ||
-			strings.Contains(outputStr, "stale info") ||
-			strings.Contains(outputStr, "force-with-lease") {
-			pushCmd = exec.Command("git", "push", "-u", "origin", "main", "--force")
-			pushCmd.Dir = bundlePath
-			if output, err := pushCmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("push failed: %s", strings.TrimSpace(string(output)))
-			}
-		} else {
-			return fmt.Errorf("push failed: %s", strings.TrimSpace(string(output)))
-		}
+		return gitCommandOutputError("push", output, err)
 	}
 
 	return nil
+}
+
+func fetchRemoteBranch(bundlePath, branch string) error {
+	cmd := exec.Command("git", "fetch", "--depth=1", "origin", branch)
+	cmd.Dir = bundlePath
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return gitCommandOutputError(fmt.Sprintf("git fetch origin %s", branch), output, err)
+	}
+	return nil
+}
+
+func gitCommandOutputError(context string, output []byte, err error) error {
+	msg := strings.TrimSpace(string(output))
+	if msg == "" {
+		return fmt.Errorf("%s failed: %w", context, err)
+	}
+	return fmt.Errorf("%s failed: %w: %s", context, err, msg)
 }
 
 // EnableGitHubPages enables GitHub Pages for a repository.
@@ -809,12 +820,19 @@ func PushToGHPagesBranch(bundlePath string, repoFullName string) error {
 		}
 	}
 
-	// Push gh-pages branch
+	// Push gh-pages branch. If a remote gh-pages branch exists, fetch it first
+	// so force-with-lease protects against concurrent updates. If it does not
+	// exist, a normal push creates it without needing force.
 	fmt.Println("  -> Pushing gh-pages branch...")
-	pushCmd := exec.Command("git", "push", "-u", "origin", "gh-pages", "--force")
+	pushArgs := []string{"push", "-u", "origin", "gh-pages"}
+	if err := fetchRemoteBranch(bundlePath, "gh-pages"); err == nil {
+		pushArgs = append(pushArgs, "--force-with-lease")
+	}
+
+	pushCmd := exec.Command("git", pushArgs...)
 	pushCmd.Dir = bundlePath
 	if output, err := pushCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("push gh-pages failed: %s", strings.TrimSpace(string(output)))
+		return gitCommandOutputError("push gh-pages", output, err)
 	}
 
 	return nil

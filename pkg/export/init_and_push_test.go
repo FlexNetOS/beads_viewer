@@ -9,12 +9,13 @@ import (
 	"testing"
 )
 
-func TestInitAndPush_UsesForceFallbackOnPushError(t *testing.T) {
+func TestInitAndPush_ReturnsLeaseErrorWithoutUnsafeForceFallback(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script stubs not supported on windows in this test")
 	}
 
 	binDir := t.TempDir()
+	gitLogPath := filepath.Join(binDir, "git.log")
 
 	ghScript := `#!/bin/sh
 set -eu
@@ -61,14 +62,18 @@ case "$cmd" in
     echo "already"
     exit 1
     ;;
+  fetch)
+    printf '%s\n' "fetch $*" >> "$GIT_LOG_FILE"
+    exit 0
+    ;;
   push)
-    # First push uses --force-with-lease when overwriting.
+    printf '%s\n' "push $*" >> "$GIT_LOG_FILE"
     if echo "$*" | grep -q -- "--force-with-lease"; then
       echo "cannot be resolved"
       exit 1
     fi
-    # Second push retries with --force.
-    exit 0
+    echo "unsafe raw force push attempted"
+    exit 2
     ;;
 esac
 
@@ -80,6 +85,7 @@ exit 0
 
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, origPath))
+	t.Setenv("GIT_LOG_FILE", gitLogPath)
 
 	bundleDir := t.TempDir()
 	// Ensure the directory contains at least one file for realism.
@@ -87,8 +93,27 @@ exit 0
 		t.Fatalf("WriteFile index.html: %v", err)
 	}
 
-	if err := InitAndPush(bundleDir, "alice/repo", true); err != nil {
-		t.Fatalf("InitAndPush returned error: %v", err)
+	err := InitAndPush(bundleDir, "alice/repo", true)
+	if err == nil {
+		t.Fatalf("expected InitAndPush to return the force-with-lease push error")
+	}
+	if !strings.Contains(err.Error(), "cannot be resolved") {
+		t.Fatalf("expected lease failure in InitAndPush error, got: %v", err)
+	}
+
+	gitLog, readErr := os.ReadFile(gitLogPath)
+	if readErr != nil {
+		t.Fatalf("read git log: %v", readErr)
+	}
+	logText := string(gitLog)
+	if !strings.Contains(logText, "fetch --depth=1 origin main") {
+		t.Fatalf("expected InitAndPush to fetch origin/main before force-with-lease push, log:\n%s", logText)
+	}
+	if !strings.Contains(logText, "push -u origin main --force-with-lease") {
+		t.Fatalf("expected InitAndPush to use force-with-lease, log:\n%s", logText)
+	}
+	if strings.Contains(logText, "push -u origin main --force\n") {
+		t.Fatalf("InitAndPush attempted unsafe raw force fallback, log:\n%s", logText)
 	}
 }
 
@@ -117,5 +142,71 @@ exit 0
 		t.Fatal("Expected InitAndPush to return error when repo has content and ForceOverwrite=false")
 	} else if !strings.Contains(strings.ToLower(err.Error()), "forceoverwrite") {
 		t.Fatalf("Unexpected InitAndPush error: %v", err)
+	}
+}
+
+func TestPushToGHPagesBranch_UsesForceWithLeaseAfterFetchingRemoteBranch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stubs not supported on windows in this test")
+	}
+
+	binDir := t.TempDir()
+	gitLogPath := filepath.Join(binDir, "git.log")
+
+	gitScript := `#!/bin/sh
+set -eu
+cmd="${1-}"
+shift || true
+printf '%s\n' "$cmd $*" >> "$GIT_LOG_FILE"
+
+case "$cmd" in
+  checkout|add|commit)
+    exit 0
+    ;;
+  fetch)
+    if [ "$*" = "--depth=1 origin gh-pages" ]; then
+      exit 0
+    fi
+    exit 1
+    ;;
+  push)
+    if echo "$*" | grep -q -- "--force-with-lease"; then
+      exit 0
+    fi
+    echo "unsafe raw force push attempted"
+    exit 2
+    ;;
+esac
+
+exit 0
+`
+	writeExecutable(t, binDir, "git", gitScript)
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, origPath))
+	t.Setenv("GIT_LOG_FILE", gitLogPath)
+
+	bundleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bundleDir, "index.html"), []byte("<!doctype html>"), 0644); err != nil {
+		t.Fatalf("WriteFile index.html: %v", err)
+	}
+
+	if err := PushToGHPagesBranch(bundleDir, "alice/repo"); err != nil {
+		t.Fatalf("PushToGHPagesBranch returned error: %v", err)
+	}
+
+	gitLog, err := os.ReadFile(gitLogPath)
+	if err != nil {
+		t.Fatalf("read git log: %v", err)
+	}
+	logText := string(gitLog)
+	if !strings.Contains(logText, "fetch --depth=1 origin gh-pages") {
+		t.Fatalf("expected PushToGHPagesBranch to fetch gh-pages before lease push, log:\n%s", logText)
+	}
+	if !strings.Contains(logText, "push -u origin gh-pages --force-with-lease") {
+		t.Fatalf("expected PushToGHPagesBranch to use force-with-lease, log:\n%s", logText)
+	}
+	if strings.Contains(logText, "push -u origin gh-pages --force\n") {
+		t.Fatalf("PushToGHPagesBranch attempted unsafe raw force push, log:\n%s", logText)
 	}
 }
