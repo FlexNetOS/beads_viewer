@@ -45,6 +45,13 @@ func (s *StreamExtractor) SetProgressCallback(cb ProgressCallback) {
 	s.progressCB = cb
 }
 
+func (s *StreamExtractor) progressCallback(opts StreamOptions) ProgressCallback {
+	if opts.OnProgress != nil {
+		return opts.OnProgress
+	}
+	return s.progressCB
+}
+
 // StreamOptions controls streaming extraction behavior
 type StreamOptions struct {
 	Since       *time.Time // Only commits after this time
@@ -63,9 +70,11 @@ func (s *StreamExtractor) StreamEvents(opts StreamOptions) ([]BeadEvent, error) 
 		limit = DefaultHistoryLimit
 	}
 
+	onProgress := s.progressCallback(opts)
+
 	// First, count commits for progress reporting (fast)
 	totalCommits := 0
-	if opts.OnProgress != nil {
+	if onProgress != nil {
 		var err error
 		totalCommits, err = s.countCommits(opts)
 		if err != nil {
@@ -86,7 +95,7 @@ func (s *StreamExtractor) StreamEvents(opts StreamOptions) ([]BeadEvent, error) 
 	}
 
 	// Parse events as they stream in
-	events, parseErr := s.parseStream(stdout, opts.BeadID, opts.ClosedSince, totalCommits, opts.OnProgress)
+	events, parseErr := s.parseStream(stdout, opts.BeadID, opts.ClosedSince, totalCommits, onProgress)
 	if parseErr != nil {
 		// Stop git before waiting. If parsing stopped early, git may still be
 		// blocked writing to stdout; waiting first can deadlock.

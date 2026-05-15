@@ -67,6 +67,51 @@ func TestStreamExtractor_SetProgressCallback(t *testing.T) {
 	}
 }
 
+func TestStreamExtractor_ProgressCallbackUsesExtractorDefault(t *testing.T) {
+	s := NewStreamExtractor("/tmp/test")
+
+	defaultCalls := 0
+	s.SetProgressCallback(func(processed, total int) {
+		defaultCalls++
+	})
+
+	onProgress := s.progressCallback(StreamOptions{})
+	if onProgress == nil {
+		t.Fatal("progressCallback returned nil")
+	}
+	onProgress(1, 1)
+	if defaultCalls == 0 {
+		t.Fatal("extractor-level progress callback was not used")
+	}
+}
+
+func TestStreamExtractor_ProgressCallbackOptionsOverrideDefault(t *testing.T) {
+	s := NewStreamExtractor("/tmp/test")
+
+	defaultCalls := 0
+	overrideCalls := 0
+	s.SetProgressCallback(func(processed, total int) {
+		defaultCalls++
+	})
+	opts := StreamOptions{
+		OnProgress: func(processed, total int) {
+			overrideCalls++
+		},
+	}
+
+	onProgress := s.progressCallback(opts)
+	if onProgress == nil {
+		t.Fatal("progressCallback returned nil")
+	}
+	onProgress(1, 1)
+	if overrideCalls == 0 {
+		t.Fatal("per-call progress callback was not used")
+	}
+	if defaultCalls != 0 {
+		t.Fatalf("extractor default progress callback was called %d times despite per-call override", defaultCalls)
+	}
+}
+
 func TestStreamExtractor_BuildStreamCommandDisablesColor(t *testing.T) {
 	s := NewStreamExtractor("/tmp/test")
 	cmd := s.buildStreamCommand(StreamOptions{Limit: 5}, 5)
@@ -464,16 +509,7 @@ func TestStreamExtractor_StreamEventsWithGitColorAlways(t *testing.T) {
 	repoPath := initTempGitRepo(t)
 	runGit(t, repoPath, "config", "color.ui", "always")
 
-	beadsDir := filepath.Join(repoPath, ".beads")
-	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
-		t.Fatalf("create beads dir: %v", err)
-	}
-	beadsPath := filepath.Join(beadsDir, "beads.jsonl")
-	if err := os.WriteFile(beadsPath, []byte(`{"id":"bv-color","status":"open","title":"Color safe"}`+"\n"), 0o644); err != nil {
-		t.Fatalf("write beads file: %v", err)
-	}
-	runGit(t, repoPath, "add", ".beads/beads.jsonl")
-	runGit(t, repoPath, "commit", "-m", "add colored history bead")
+	writeStreamFixtureBead(t, repoPath, "bv-color")
 
 	events, err := NewStreamExtractor(repoPath).StreamEvents(StreamOptions{Limit: 5})
 	if err != nil {
@@ -485,6 +521,82 @@ func TestStreamExtractor_StreamEventsWithGitColorAlways(t *testing.T) {
 		}
 	}
 	t.Fatalf("expected created event for bv-color with color.ui=always, got %#v", events)
+}
+
+func TestStreamExtractor_StreamEventsUsesExtractorProgressCallback(t *testing.T) {
+	repoPath := initTempGitRepo(t)
+	writeStreamFixtureBead(t, repoPath, "bv-progress")
+
+	progressCalls := 0
+	s := NewStreamExtractor(repoPath)
+	s.SetProgressCallback(func(processed, total int) {
+		progressCalls++
+	})
+
+	events, err := s.StreamEvents(StreamOptions{Limit: 5})
+	if err != nil {
+		t.Fatalf("StreamEvents failed: %v", err)
+	}
+	if progressCalls == 0 {
+		t.Fatal("extractor-level progress callback was not called")
+	}
+	assertCreatedEvent(t, events, "bv-progress")
+}
+
+func TestStreamExtractor_StreamEventsOptionsProgressOverridesExtractorDefault(t *testing.T) {
+	repoPath := initTempGitRepo(t)
+	writeStreamFixtureBead(t, repoPath, "bv-progress-override")
+
+	defaultCalls := 0
+	overrideCalls := 0
+	s := NewStreamExtractor(repoPath)
+	s.SetProgressCallback(func(processed, total int) {
+		defaultCalls++
+	})
+
+	events, err := s.StreamEvents(StreamOptions{
+		Limit: 5,
+		OnProgress: func(processed, total int) {
+			overrideCalls++
+		},
+	})
+	if err != nil {
+		t.Fatalf("StreamEvents failed: %v", err)
+	}
+	if overrideCalls == 0 {
+		t.Fatal("per-call progress callback was not called")
+	}
+	if defaultCalls != 0 {
+		t.Fatalf("extractor default progress callback was called %d times despite per-call override", defaultCalls)
+	}
+	assertCreatedEvent(t, events, "bv-progress-override")
+}
+
+func writeStreamFixtureBead(t *testing.T, repoPath, beadID string) {
+	t.Helper()
+
+	beadsDir := filepath.Join(repoPath, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("create beads dir: %v", err)
+	}
+	beadsPath := filepath.Join(beadsDir, "beads.jsonl")
+	content := `{"id":"` + beadID + `","status":"open","title":"Stream fixture"}` + "\n"
+	if err := os.WriteFile(beadsPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write beads file: %v", err)
+	}
+	runGit(t, repoPath, "add", ".beads/beads.jsonl")
+	runGit(t, repoPath, "commit", "-m", "add stream fixture bead")
+}
+
+func assertCreatedEvent(t *testing.T, events []BeadEvent, beadID string) {
+	t.Helper()
+
+	for _, event := range events {
+		if event.BeadID == beadID && event.EventType == EventCreated {
+			return
+		}
+	}
+	t.Fatalf("expected created event for %s, got %#v", beadID, events)
 }
 
 func TestProgressCallback_CalledDuringParsing(t *testing.T) {
