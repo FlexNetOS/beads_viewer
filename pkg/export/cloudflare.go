@@ -25,7 +25,10 @@ var (
 	cfDeploymentIDRegex   = regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`)
 	cfNonAlphanumRegex    = regexp.MustCompile(`[^a-z0-9-]`)
 	cfMultipleHyphenRegex = regexp.MustCompile(`-+`)
+	cfProjectNameRegex    = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 )
+
+const cloudflareProjectNameMaxLen = 63
 
 // CloudflareDeployConfig configures Cloudflare Pages deployment.
 type CloudflareDeployConfig struct {
@@ -361,11 +364,32 @@ func isGenericCloudflareOutputDir(name string) bool {
 	}
 }
 
+func validateCloudflareProjectName(projectName string) error {
+	trimmed := strings.TrimSpace(projectName)
+	if trimmed == "" {
+		return fmt.Errorf("cloudflare project name is required")
+	}
+	if trimmed != projectName {
+		return fmt.Errorf("cloudflare project name %q must not contain leading or trailing whitespace", projectName)
+	}
+	if len(projectName) > cloudflareProjectNameMaxLen {
+		return fmt.Errorf("cloudflare project name %q is too long: %d characters, max %d",
+			projectName, len(projectName), cloudflareProjectNameMaxLen)
+	}
+	if !cfProjectNameRegex.MatchString(projectName) {
+		return fmt.Errorf("cloudflare project name %q must contain only lowercase letters, numbers, and hyphens, and start and end with a letter or number", projectName)
+	}
+	return nil
+}
+
 // DeployToCloudflarePages performs a complete deployment to Cloudflare Pages.
 func DeployToCloudflarePages(config CloudflareDeployConfig) (*CloudflareDeployResult, error) {
 	// Set default branch
 	if config.Branch == "" {
 		config.Branch = "main"
+	}
+	if err := validateCloudflareProjectName(config.ProjectName); err != nil {
+		return nil, err
 	}
 
 	// 1. Check wrangler CLI status
@@ -523,6 +547,9 @@ func DeleteCloudflareProject(projectName string, confirm bool) error {
 	if !confirm {
 		return fmt.Errorf("project deletion requires confirmation")
 	}
+	if err := validateCloudflareProjectName(projectName); err != nil {
+		return err
+	}
 
 	cmd := exec.Command("wrangler", "pages", "project", "delete", projectName, "--yes")
 	output, err := cmd.CombinedOutput()
@@ -540,6 +567,9 @@ func OpenCloudflareInBrowser(projectName string) error {
 	if os.Getenv("BV_NO_BROWSER") != "" || os.Getenv("BV_TEST_MODE") != "" {
 		return nil
 	}
+	if err := validateCloudflareProjectName(projectName); err != nil {
+		return err
+	}
 
 	url := fmt.Sprintf("https://dash.cloudflare.com/?to=/:account/pages/view/%s", projectName)
 
@@ -548,6 +578,10 @@ func OpenCloudflareInBrowser(projectName string) error {
 
 // CloudflareProjectExists checks if a Cloudflare Pages project exists.
 func CloudflareProjectExists(projectName string) (bool, error) {
+	if err := validateCloudflareProjectName(projectName); err != nil {
+		return false, err
+	}
+
 	// Try to get project info - if it fails with "not found", project doesn't exist
 	cmd := exec.Command("wrangler", "pages", "project", "list")
 	output, err := cmd.Output()
@@ -569,6 +603,9 @@ func CloudflareProjectExists(projectName string) (bool, error) {
 
 // CreateCloudflareProject creates a new Cloudflare Pages project.
 func CreateCloudflareProject(projectName string, productionBranch string) error {
+	if err := validateCloudflareProjectName(projectName); err != nil {
+		return err
+	}
 	if productionBranch == "" {
 		productionBranch = "main"
 	}
@@ -596,6 +633,10 @@ func CreateCloudflareProject(projectName string, productionBranch string) error 
 
 // EnsureCloudflareProject ensures a Cloudflare Pages project exists, creating it if necessary.
 func EnsureCloudflareProject(projectName string, productionBranch string) error {
+	if err := validateCloudflareProjectName(projectName); err != nil {
+		return err
+	}
+
 	exists, err := CloudflareProjectExists(projectName)
 	if err != nil {
 		// Can't check, try to create anyway
@@ -662,6 +703,9 @@ func DeployToCloudflareWithAutoCreate(config CloudflareDeployConfig, expectedIss
 	// Set default branch
 	if config.Branch == "" {
 		config.Branch = "main"
+	}
+	if err := validateCloudflareProjectName(config.ProjectName); err != nil {
+		return nil, err
 	}
 
 	// 1. Check wrangler CLI status
