@@ -417,19 +417,33 @@ func parseBeadJSON(jsonStr string) (beadSnapshot, bool) {
 
 // determineStatusEvent determines the appropriate event type for a status transition
 func determineStatusEvent(oldStatus, newStatus string) EventType {
+	oldStatus = normalizeLifecycleStatus(oldStatus)
+	newStatus = normalizeLifecycleStatus(newStatus)
+
 	switch newStatus {
 	case "in_progress":
+		if isClosedLifecycleStatus(oldStatus) {
+			return EventReopened
+		}
 		return EventClaimed
-	case "closed":
+	case "closed", "tombstone":
 		return EventClosed
 	case "open":
-		if oldStatus == "closed" {
+		if isClosedLifecycleStatus(oldStatus) {
 			return EventReopened
 		}
 		return EventModified
 	default:
 		return EventModified
 	}
+}
+
+func normalizeLifecycleStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
+}
+
+func isClosedLifecycleStatus(status string) bool {
+	return status == "closed" || status == "tombstone"
 }
 
 // reverseEvents reverses a slice of events in place

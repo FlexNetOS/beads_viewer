@@ -466,6 +466,15 @@ func TestStreamExtractor_ParseBufferedDiff_ClosedSince(t *testing.T) {
 		t.Errorf("old closed event should be filtered: got %d events", len(oldEvents))
 	}
 
+	oldTombstoneLines := []string{
+		`-{"id":"bv-1","status":"in_progress","title":"Old"}`,
+		`+{"id":"bv-1","status":"tombstone","title":"Old"}`,
+	}
+	oldTombstoneEvents := s.parseBufferedDiff(oldTombstoneLines, oldInfo, "", &cutoff)
+	if len(oldTombstoneEvents) != 0 {
+		t.Errorf("old tombstone event should be filtered as closed: got %d events", len(oldTombstoneEvents))
+	}
+
 	// Recent closed event (should pass)
 	recentInfo := commitInfo{
 		SHA:       "recent123",

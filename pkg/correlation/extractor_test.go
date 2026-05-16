@@ -165,7 +165,11 @@ func TestDetermineStatusEvent(t *testing.T) {
 		{"in_progress", "closed", EventClosed},
 		{"open", "closed", EventClosed},
 		{"closed", "open", EventReopened},
-		{"closed", "in_progress", EventClaimed},
+		{"closed", "in_progress", EventReopened},
+		{"open", "tombstone", EventClosed},
+		{"in_progress", " tombstone ", EventClosed},
+		{"tombstone", "open", EventReopened},
+		{"TOMBSTONE", " In_Progress ", EventReopened},
 		{"open", "blocked", EventModified},
 		{"in_progress", "open", EventModified},
 	}
