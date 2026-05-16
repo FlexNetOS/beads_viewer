@@ -357,12 +357,9 @@ func TestHashOptions(t *testing.T) {
 }
 
 func TestCachedCorrelator_CacheHitAndMiss(t *testing.T) {
-	// Skip if not in a git repo
-	if _, err := getGitHead("."); err != nil {
-		t.Skip("Not in a git repository")
-	}
-
-	correlator := NewCachedCorrelator(".")
+	repoPath := initTempGitRepo(t)
+	correlator := NewCachedCorrelator(repoPath)
+	correlator.shouldRefreshFn = neverRefreshForTest
 	beads := []BeadInfo{{ID: "test-1", Status: "open"}}
 	opts := CorrelatorOptions{Limit: 10}
 
@@ -399,12 +396,9 @@ func TestCachedCorrelator_CacheHitAndMiss(t *testing.T) {
 }
 
 func TestCachedCorrelator_DifferentOptionsMiss(t *testing.T) {
-	// Skip if not in a git repo
-	if _, err := getGitHead("."); err != nil {
-		t.Skip("Not in a git repository")
-	}
-
-	correlator := NewCachedCorrelator(".")
+	repoPath := initTempGitRepo(t)
+	correlator := NewCachedCorrelator(repoPath)
+	correlator.shouldRefreshFn = neverRefreshForTest
 	beads := []BeadInfo{{ID: "test-1", Status: "open"}}
 
 	// First call
@@ -426,12 +420,9 @@ func TestCachedCorrelator_DifferentOptionsMiss(t *testing.T) {
 }
 
 func TestCachedCorrelator_InvalidateCache(t *testing.T) {
-	// Skip if not in a git repo
-	if _, err := getGitHead("."); err != nil {
-		t.Skip("Not in a git repository")
-	}
-
-	correlator := NewCachedCorrelator(".")
+	repoPath := initTempGitRepo(t)
+	correlator := NewCachedCorrelator(repoPath)
+	correlator.shouldRefreshFn = neverRefreshForTest
 	beads := []BeadInfo{{ID: "test-1", Status: "open"}}
 	opts := CorrelatorOptions{Limit: 10}
 
@@ -488,12 +479,9 @@ func TestNewCachedCorrelatorWithOptionsForwardsExplicitBeadsPath(t *testing.T) {
 }
 
 func TestCachedCorrelator_Singleflight(t *testing.T) {
-	// Skip if not in a git repo
-	if _, err := getGitHead("."); err != nil {
-		t.Skip("Not in a git repository")
-	}
-
-	correlator := NewCachedCorrelator(".")
+	repoPath := initTempGitRepo(t)
+	correlator := NewCachedCorrelator(repoPath)
+	correlator.shouldRefreshFn = neverRefreshForTest
 	beads := []BeadInfo{{ID: "test-1", Status: "open"}}
 	opts := CorrelatorOptions{Limit: 10}
 
@@ -959,6 +947,10 @@ func runGit(t *testing.T, repoPath string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
+}
+
+func neverRefreshForTest(time.Time, time.Duration, float64, time.Time) bool {
+	return false
 }
 
 func TestCacheKey_Empty(t *testing.T) {

@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -149,6 +150,58 @@ func TestLookupByCommit_ShortSHA(t *testing.T) {
 	}
 }
 
+func TestLookupByCommit_EmptySHARejected(t *testing.T) {
+	report := createTestReport()
+	rl := NewReverseLookup(report)
+
+	result, err := rl.LookupByCommit(" \t ")
+	if err == nil {
+		t.Fatal("expected empty SHA to be rejected")
+	}
+	if result != nil {
+		t.Fatalf("result = %#v, want nil on validation error", result)
+	}
+	if !strings.Contains(err.Error(), "commit SHA is required") {
+		t.Fatalf("error = %q, want missing SHA message", err.Error())
+	}
+}
+
+func TestLookupByCommit_AmbiguousShortSHARejected(t *testing.T) {
+	now := time.Now()
+	report := createTestReport()
+	report.CommitIndex["abc123zzz999"] = []string{"bv-ambiguous"}
+	report.Histories["bv-ambiguous"] = BeadHistory{
+		BeadID: "bv-ambiguous",
+		Title:  "Ambiguous short SHA",
+		Status: "closed",
+		Commits: []CorrelatedCommit{
+			{
+				SHA:         "abc123zzz999",
+				ShortSHA:    "abc123z",
+				Message:     "fix: ambiguous prefix",
+				Author:      "Dev Three",
+				AuthorEmail: "dev3@test.com",
+				Timestamp:   now,
+				Method:      MethodExplicitID,
+				Confidence:  0.88,
+				Reason:      "Explicit ID",
+			},
+		},
+	}
+	rl := NewReverseLookup(report)
+
+	result, err := rl.LookupByCommit("abc123")
+	if err == nil {
+		t.Fatal("expected ambiguous short SHA to be rejected")
+	}
+	if result != nil {
+		t.Fatalf("result = %#v, want nil on ambiguity", result)
+	}
+	if !strings.Contains(err.Error(), "ambiguous commit SHA prefix") {
+		t.Fatalf("error = %q, want ambiguity message", err.Error())
+	}
+}
+
 func TestLookupByCommit_NotFound(t *testing.T) {
 	report := createTestReport()
 	rl := NewReverseLookup(report)
@@ -277,6 +330,8 @@ func TestNormalizeSHA(t *testing.T) {
 		{"abc123def456", "abc123def456"}, // Full SHA in index
 		{"abc123", "abc123def456"},       // Short prefix expands
 		{"def456", "def456ghi789"},       // Another short prefix
+		{"  def456  ", "def456ghi789"},   // Surrounding whitespace is ignored
+		{"", ""},                         // Empty input cannot be expanded
 		{"unknown", "unknown"},           // Unknown stays as-is
 	}
 

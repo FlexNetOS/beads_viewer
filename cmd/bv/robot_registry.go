@@ -1970,11 +1970,54 @@ func loadCorrelationFeedbackStore(workDir string) (*correlation.FeedbackStore, e
 }
 
 func parseCorrelationArg(arg string) (string, string, error) {
-	parts := strings.SplitN(arg, ":", 2)
+	parts := strings.SplitN(strings.TrimSpace(arg), ":", 2)
 	if len(parts) != 2 {
-		return "", "", fmt.Errorf("expected format: SHA:beadID, got: %s", arg)
+		return "", "", fmt.Errorf("expected format: SHA:beadID, got: %q", arg)
 	}
-	return parts[0], parts[1], nil
+	commitSHA := strings.TrimSpace(parts[0])
+	beadID := strings.TrimSpace(parts[1])
+	if commitSHA == "" || beadID == "" {
+		return "", "", fmt.Errorf("expected non-empty SHA and bead ID in format SHA:beadID, got: %q", arg)
+	}
+	return commitSHA, beadID, nil
+}
+
+func resolveCorrelatedCommit(commits []correlation.CorrelatedCommit, sha string) (*correlation.CorrelatedCommit, error) {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return nil, fmt.Errorf("commit SHA is required")
+	}
+
+	type commitMatch struct {
+		index int
+		sha   string
+	}
+	matches := make([]commitMatch, 0, 1)
+	seen := make(map[string]bool)
+	for i := range commits {
+		commitSHA := commits[i].SHA
+		if commitSHA == sha {
+			return &commits[i], nil
+		}
+		if (commits[i].ShortSHA == sha || strings.HasPrefix(commitSHA, sha)) && !seen[commitSHA] {
+			matches = append(matches, commitMatch{index: i, sha: commitSHA})
+			seen[commitSHA] = true
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &commits[matches[0].index], nil
+	default:
+		matchedSHAs := make([]string, len(matches))
+		for i, match := range matches {
+			matchedSHAs[i] = match.sha
+		}
+		sort.Strings(matchedSHAs)
+		return nil, fmt.Errorf("ambiguous commit SHA prefix %q matches %d commits: %s", sha, len(matchedSHAs), strings.Join(matchedSHAs, ", "))
+	}
 }
 
 func handleRobotCorrelationStats(ctx RobotContext) error {
@@ -2035,12 +2078,9 @@ func handleRobotExplainCorrelation(ctx RobotContext, cfg phaseThreeRobotHandlerC
 		return newReportedRobotHandlerExit(1)
 	}
 
-	var targetCommit *correlation.CorrelatedCommit
-	for i := range history.Commits {
-		if strings.HasPrefix(history.Commits[i].SHA, commitSHA) || history.Commits[i].ShortSHA == commitSHA {
-			targetCommit = &history.Commits[i]
-			break
-		}
+	targetCommit, err := resolveCorrelatedCommit(history.Commits, commitSHA)
+	if err != nil {
+		return err
 	}
 	if targetCommit == nil {
 		fmt.Fprintf(ctx.StderrOrDefault(), "Commit %s not found in bead %s correlations\n", commitSHA, beadID)
@@ -2088,16 +2128,21 @@ func handleRobotCorrelationFeedback(ctx RobotContext, cfg phaseThreeRobotHandler
 		return fmt.Errorf("generating report: %w", err)
 	}
 
-	var originalConf float64
-	if history, ok := report.Histories[beadID]; ok {
-		for _, c := range history.Commits {
-			if strings.HasPrefix(c.SHA, commitSHA) || c.ShortSHA == commitSHA {
-				originalConf = c.Confidence
-				commitSHA = c.SHA
-				break
-			}
-		}
+	history, ok := report.Histories[beadID]
+	if !ok {
+		fmt.Fprintf(ctx.StderrOrDefault(), "Bead not found: %s\n", beadID)
+		return newReportedRobotHandlerExit(1)
 	}
+	targetCommit, err := resolveCorrelatedCommit(history.Commits, commitSHA)
+	if err != nil {
+		return err
+	}
+	if targetCommit == nil {
+		fmt.Fprintf(ctx.StderrOrDefault(), "Commit %s not found in bead %s correlations\n", commitSHA, beadID)
+		return newReportedRobotHandlerExit(1)
+	}
+	originalConf := targetCommit.Confidence
+	commitSHA = targetCommit.SHA
 
 	feedbackBy := "cli"
 	if cfg.CorrelationFeedbackBy != nil && strings.TrimSpace(*cfg.CorrelationFeedbackBy) != "" {

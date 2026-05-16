@@ -3972,15 +3972,6 @@ func main() {
 				os.Exit(0)
 			}
 
-			// Parse SHA:beadID format
-			parseCorrelationArg := func(arg string) (string, string, error) {
-				parts := strings.SplitN(arg, ":", 2)
-				if len(parts) != 2 {
-					return "", "", fmt.Errorf("expected format: SHA:beadID, got: %s", arg)
-				}
-				return parts[0], parts[1], nil
-			}
-
 			// Handle --robot-explain-correlation
 			if *robotExplainCorrelation != "" {
 				commitSHA, beadID, err := parseCorrelationArg(*robotExplainCorrelation)
@@ -4025,14 +4016,11 @@ func main() {
 					os.Exit(1)
 				}
 
-				var targetCommit *correlation.CorrelatedCommit
-				for i := range history.Commits {
-					if strings.HasPrefix(history.Commits[i].SHA, commitSHA) || history.Commits[i].ShortSHA == commitSHA {
-						targetCommit = &history.Commits[i]
-						break
-					}
+				targetCommit, err := resolveCorrelatedCommit(history.Commits, commitSHA)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
 				}
-
 				if targetCommit == nil {
 					fmt.Fprintf(os.Stderr, "Commit %s not found in bead %s correlations\n", commitSHA, beadID)
 					os.Exit(1)
@@ -4093,16 +4081,22 @@ func main() {
 					os.Exit(1)
 				}
 
-				var originalConf float64
-				if history, ok := report.Histories[beadID]; ok {
-					for _, c := range history.Commits {
-						if strings.HasPrefix(c.SHA, commitSHA) || c.ShortSHA == commitSHA {
-							originalConf = c.Confidence
-							commitSHA = c.SHA // Use full SHA
-							break
-						}
-					}
+				history, ok := report.Histories[beadID]
+				if !ok {
+					fmt.Fprintf(os.Stderr, "Bead not found: %s\n", beadID)
+					os.Exit(1)
 				}
+				targetCommit, err := resolveCorrelatedCommit(history.Commits, commitSHA)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				if targetCommit == nil {
+					fmt.Fprintf(os.Stderr, "Commit %s not found in bead %s correlations\n", commitSHA, beadID)
+					os.Exit(1)
+				}
+				originalConf := targetCommit.Confidence
+				commitSHA = targetCommit.SHA // Use full SHA
 
 				if err := feedbackStore.Confirm(commitSHA, beadID, feedbackBy, originalConf, *correlationFeedbackReason); err != nil {
 					fmt.Fprintf(os.Stderr, "Error saving feedback: %v\n", err)
@@ -4163,16 +4157,22 @@ func main() {
 					os.Exit(1)
 				}
 
-				var originalConf float64
-				if history, ok := report.Histories[beadID]; ok {
-					for _, c := range history.Commits {
-						if strings.HasPrefix(c.SHA, commitSHA) || c.ShortSHA == commitSHA {
-							originalConf = c.Confidence
-							commitSHA = c.SHA // Use full SHA
-							break
-						}
-					}
+				history, ok := report.Histories[beadID]
+				if !ok {
+					fmt.Fprintf(os.Stderr, "Bead not found: %s\n", beadID)
+					os.Exit(1)
 				}
+				targetCommit, err := resolveCorrelatedCommit(history.Commits, commitSHA)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				if targetCommit == nil {
+					fmt.Fprintf(os.Stderr, "Commit %s not found in bead %s correlations\n", commitSHA, beadID)
+					os.Exit(1)
+				}
+				originalConf := targetCommit.Confidence
+				commitSHA = targetCommit.SHA // Use full SHA
 
 				if err := feedbackStore.Reject(commitSHA, beadID, feedbackBy, originalConf, *correlationFeedbackReason); err != nil {
 					fmt.Fprintf(os.Stderr, "Error saving feedback: %v\n", err)
