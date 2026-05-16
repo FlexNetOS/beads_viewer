@@ -378,12 +378,20 @@ func (h *HistoryModel) buildFileTree() {
 		return
 	}
 
-	// Count changes per file path
+	// Count correlated commit appearances per file and ancestor directory path.
+	// A commit that touches multiple files in the same directory should increment
+	// that directory once, not once per file.
 	fileChanges := make(map[string]int)
 	for _, hist := range h.report.Histories {
 		for _, commit := range hist.Commits {
+			pathsInCommit := make(map[string]struct{})
 			for _, file := range commit.Files {
-				fileChanges[file.Path]++
+				for _, path := range fileTreePathPrefixes(file.Path) {
+					pathsInCommit[path] = struct{}{}
+				}
+			}
+			for path := range pathsInCommit {
+				fileChanges[path]++
 			}
 		}
 	}
@@ -409,6 +417,8 @@ func (h *HistoryModel) buildFileTree() {
 					Expanded:    false,
 					Level:       i,
 				}
+			} else if !isLast {
+				root[fullPath].IsDir = true
 			}
 
 			if isLast {
@@ -446,6 +456,30 @@ func (h *HistoryModel) buildFileTree() {
 	})
 
 	h.rebuildFlatFileList()
+}
+
+func fileTreePathPrefixes(path string) []string {
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return nil
+	}
+
+	parts := strings.Split(path, "/")
+	nonEmptyParts := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			nonEmptyParts = append(nonEmptyParts, part)
+		}
+	}
+	if len(nonEmptyParts) == 0 {
+		return nil
+	}
+
+	prefixes := make([]string, 0, len(nonEmptyParts))
+	for i := range nonEmptyParts {
+		prefixes = append(prefixes, strings.Join(nonEmptyParts[:i+1], "/"))
+	}
+	return prefixes
 }
 
 // sortTreeNode recursively sorts a tree node's children

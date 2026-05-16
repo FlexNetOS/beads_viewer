@@ -2349,6 +2349,75 @@ func TestFileTree_BuildsCorrectStructure(t *testing.T) {
 	}
 }
 
+func TestFileTree_DirectoryChangeCounts(t *testing.T) {
+	report := createTestHistoryReportWithFiles()
+	theme := testTheme()
+	h := NewHistoryModel(report, theme)
+	h.SetSize(160, 40)
+
+	h.ToggleFileTree()
+
+	findNode := func(path string) *FileTreeNode {
+		var walk func(nodes []*FileTreeNode) *FileTreeNode
+		walk = func(nodes []*FileTreeNode) *FileTreeNode {
+			for _, node := range nodes {
+				if strings.Compare(node.Path, path) == 0 {
+					return node
+				}
+				if found := walk(node.Children); found != nil {
+					return found
+				}
+			}
+			return nil
+		}
+		return walk(h.fileTree)
+	}
+
+	tests := []struct {
+		path string
+		want int
+	}{
+		{"pkg", 4},
+		{"pkg/auth", 3},
+		{"pkg/auth/token.go", 2},
+		{"pkg/db", 1},
+		{"README.md", 1},
+	}
+
+	for _, tc := range tests {
+		node := findNode(tc.path)
+		if node == nil {
+			t.Fatalf("expected file tree node %q", tc.path)
+		}
+		if node.ChangeCount < tc.want || node.ChangeCount > tc.want {
+			t.Errorf("node %q ChangeCount = %d, want %d", tc.path, node.ChangeCount, tc.want)
+		}
+	}
+}
+
+func TestFileTreePathPrefixes(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{name: "file in nested directory", path: "pkg/auth/token.go", want: []string{"pkg", "pkg/auth", "pkg/auth/token.go"}},
+		{name: "root file", path: "README.md", want: []string{"README.md"}},
+		{name: "leading and repeated separators", path: "/pkg//auth/token.go", want: []string{"pkg", "pkg/auth", "pkg/auth/token.go"}},
+		{name: "empty", path: "", want: nil},
+		{name: "only separators", path: "///", want: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fileTreePathPrefixes(tc.path)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Fatalf("fileTreePathPrefixes(%q) = %#v, want %#v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFileTree_Navigation(t *testing.T) {
 	report := createTestHistoryReportWithFiles()
 	theme := testTheme()
