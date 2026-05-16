@@ -1028,8 +1028,9 @@ func (h *HistoryModel) ToggleViewMode() {
 		h.selectedCommit = 0
 		h.scrollOffset = 0
 	}
-	// Re-apply search filter if active (bv-nkrj fix: filter persists across mode toggle)
-	if h.searchActive && h.searchInput.Value() != "" {
+	// Re-apply preserved search query after mode changes, even after the input
+	// has been submitted and blurred.
+	if strings.TrimSpace(h.searchInput.Value()) != "" {
 		h.applySearchFilter()
 	}
 }
@@ -1046,33 +1047,23 @@ func (h *HistoryModel) buildCommitList() {
 		return
 	}
 
-	seen := make(map[string]bool)
+	entryIndexBySHA := make(map[string]int)
+	beadIDsBySHA := make(map[string]map[string]struct{})
 	var entries []CommitListEntry
 
 	// Collect all commits from all bead histories
 	for beadID, hist := range h.report.Histories {
 		for _, commit := range hist.Commits {
-			if seen[commit.SHA] {
-				// Already have this commit, just add the bead ID
-				for i := range entries {
-					if entries[i].SHA == commit.SHA {
-						// Check if bead already in list
-						found := false
-						for _, bid := range entries[i].BeadIDs {
-							if bid == beadID {
-								found = true
-								break
-							}
-						}
-						if !found {
-							entries[i].BeadIDs = append(entries[i].BeadIDs, beadID)
-						}
-						break
-					}
+			if entryIndex, ok := entryIndexBySHA[commit.SHA]; ok {
+				if _, ok := beadIDsBySHA[commit.SHA][beadID]; !ok {
+					beadIDsBySHA[commit.SHA][beadID] = struct{}{}
+					entries[entryIndex].BeadIDs = append(entries[entryIndex].BeadIDs, beadID)
 				}
 				continue
 			}
-			seen[commit.SHA] = true
+
+			entryIndexBySHA[commit.SHA] = len(entries)
+			beadIDsBySHA[commit.SHA] = map[string]struct{}{beadID: {}}
 
 			entries = append(entries, CommitListEntry{
 				SHA:       commit.SHA,
@@ -1086,14 +1077,19 @@ func (h *HistoryModel) buildCommitList() {
 		}
 	}
 
+	for i := range entries {
+		sort.Strings(entries[i].BeadIDs)
+	}
+
 	// Sort by timestamp descending (most recent first)
 	// Note: We parse from formatted string since we stored it that way
 	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Timestamp == entries[j].Timestamp {
+		timestampOrder := strings.Compare(entries[i].Timestamp, entries[j].Timestamp)
+		if timestampOrder == 0 {
 			// Deterministic fallback for commits in same minute
 			return entries[i].SHA > entries[j].SHA
 		}
-		return entries[i].Timestamp > entries[j].Timestamp
+		return timestampOrder > 0
 	})
 
 	h.commitList = entries
@@ -2027,8 +2023,8 @@ func (h *HistoryModel) renderFilterLine() string {
 	if h.minConfidence > 0 {
 		activeFilters = append(activeFilters, fmt.Sprintf("≥%.0f%% conf", h.minConfidence*100))
 	}
-	if h.searchActive && h.searchInput.Value() != "" {
-		activeFilters = append(activeFilters, fmt.Sprintf("\"%s\"", h.searchInput.Value()))
+	if query := strings.TrimSpace(h.searchInput.Value()); query != "" {
+		activeFilters = append(activeFilters, fmt.Sprintf("\"%s\"", query))
 	}
 
 	// Show filter status
