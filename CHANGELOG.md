@@ -6,11 +6,40 @@ All notable changes to **Beads Viewer (`bv`)** are documented here. Versions are
 
 ## [Unreleased]
 
+---
+
+## [v0.16.2] -- 2026-05-16 (Release)
+
+Patch release focused on updater correctness, release artifact reliability, and hardening fixes found during fresh-eyes review passes.
+
+### Updater & Versioning
+- Ignore update notices whose release tag is equal to or older than the running version, including tags with stray whitespace.
+- Clear stale in-session update banners when a later update check resolves to the current version.
+- Label the footer badge as `Update vX.Y.Z` so it is not confused with the running `bv --version` value.
+- Avoid redundant update checks after a recent successful check.
+- Accept stable release archive names in the updater.
+
 ### Build & Release
 - Align GoReleaser archive names with README `latest/download` aliases, publish Windows as a zip archive, and update the GoReleaser config to v2 syntax.
+- Keep direct download aliases reproducible and version-aliased.
+- Keep GoReleaser snapshot builds from double-prefixing versions as `vvX.Y.Z-next`.
 
 ### Tests
 - Harden background worker tests by waiting on worker state instead of fixed sleeps.
+
+### Robustness
+- Preserve completed history searches and coalesce queued background refreshes in the TUI.
+- Resolve historical `--as-of` dates from commit history and filter stale data sources by true newest time.
+- Harden correlation batch-stat locking, git stream progress callbacks, EOF handling, temporal author filters, and tombstone lifecycle classification.
+- Safely pair agent blurb removal markers.
+- Recover stale unreadable instance locks.
+
+### Search, Hooks, Analysis & Export
+- Score all bead statuses in hybrid search mode.
+- Reject malformed hook timeout values.
+- Normalize loaded feedback data for analysis.
+- Escape interactive graph HTML, validate Cloudflare project names, keep Cloudflare suggestions nonempty, and fail stale or zero-issue deployment verification.
+- Avoid shell browser launchers on Windows and strengthen GitHub deployment helper behavior before force-with-lease pushes.
 
 ---
 
@@ -766,7 +795,8 @@ Initial release of Beads Viewer -- a keyboard-driven terminal interface for the 
 
 ---
 
-[Unreleased]: https://github.com/Dicklesworthstone/beads_viewer/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/Dicklesworthstone/beads_viewer/compare/v0.16.2...HEAD
+[v0.16.2]: https://github.com/Dicklesworthstone/beads_viewer/compare/v0.16.1...v0.16.2
 [v0.16.1]: https://github.com/Dicklesworthstone/beads_viewer/compare/v0.16.0...v0.16.1
 [v0.16.0]: https://github.com/Dicklesworthstone/beads_viewer/compare/v0.15.2...v0.16.0
 [v0.15.2]: https://github.com/Dicklesworthstone/beads_viewer/compare/v0.15.1...v0.15.2
