@@ -589,6 +589,39 @@ func TestSelectBestSource_PriorityTiebreaker(t *testing.T) {
 	}
 }
 
+func TestSelectBestSource_MaxAgeDeltaUsesNewestWhenPriorityPreferred(t *testing.T) {
+	now := time.Now()
+	sources := []DataSource{
+		{
+			Type:     SourceTypeSQLite,
+			Path:     "/test/stale.db",
+			Priority: PrioritySQLite,
+			ModTime:  now.Add(-48 * time.Hour),
+			Valid:    true,
+		},
+		{
+			Type:     SourceTypeJSONLLocal,
+			Path:     "/test/fresh.jsonl",
+			Priority: PriorityJSONLLocal,
+			ModTime:  now,
+			Valid:    true,
+		},
+	}
+
+	selected, err := SelectBestSourceWithOptions(sources, SelectionOptions{
+		PreferFreshest:      false,
+		MinimumValidSources: 1,
+		MaxAgeDelta:         time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("Selection failed: %v", err)
+	}
+
+	if selected.Path != "/test/fresh.jsonl" {
+		t.Fatalf("expected stale high-priority source to be filtered, got %s", selected.Path)
+	}
+}
+
 // TestSelectBestSource_AllInvalid tests that error is returned when all invalid
 func TestSelectBestSource_AllInvalid(t *testing.T) {
 	sources := []DataSource{
