@@ -161,15 +161,11 @@ func (h *LiveReloadHub) SSEHandler() http.HandlerFunc {
 
 		// Register this client
 		clientCh := make(chan struct{}, 1)
-		h.mu.Lock()
-		h.clients[clientCh] = struct{}{}
-		h.mu.Unlock()
+		h.addClient(clientCh)
 
 		// Cleanup on disconnect
 		defer func() {
-			h.mu.Lock()
-			delete(h.clients, clientCh)
-			h.mu.Unlock()
+			h.removeClient(clientCh)
 		}()
 
 		// Send initial connection event
@@ -192,6 +188,18 @@ func (h *LiveReloadHub) SSEHandler() http.HandlerFunc {
 			}
 		}
 	}
+}
+
+func (h *LiveReloadHub) addClient(ch chan struct{}) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clients[ch] = struct{}{}
+}
+
+func (h *LiveReloadHub) removeClient(ch chan struct{}) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.clients, ch)
 }
 
 // LiveReloadScript returns JavaScript that connects to the SSE endpoint and reloads on events.
@@ -273,22 +281,10 @@ func (w *injectingResponseWriter) Write(b []byte) (int, error) {
 	// Buffer the content
 	w.buf = append(w.buf, b...)
 
-	// Check if we have the closing body tag
-	bodyClose := []byte("</body>")
-	if idx := findLastIndex(w.buf, bodyClose); idx >= 0 && !w.injected {
-		// Inject before </body>
-		newBuf := make([]byte, 0, len(w.buf)+len(w.inject))
-		newBuf = append(newBuf, w.buf[:idx]...)
-		newBuf = append(newBuf, w.inject...)
-		newBuf = append(newBuf, w.buf[idx:]...)
-		w.buf = newBuf
-		w.injected = true
-	}
-
 	// If we've seen </html>, flush everything
 	if findLastIndex(w.buf, []byte("</html>")) >= 0 {
-		w.committed = true
-		_, err := w.ResponseWriter.Write(w.buf)
+		w.injectScript()
+		err := w.commit()
 		return len(b), err
 	}
 
@@ -298,16 +294,43 @@ func (w *injectingResponseWriter) Write(b []byte) (int, error) {
 // Flush ensures any remaining buffered content is written.
 func (w *injectingResponseWriter) Flush() {
 	if !w.committed && len(w.buf) > 0 {
-		w.committed = true
-		// Inject at end if we haven't yet and there's content
-		if !w.injected {
-			w.buf = append(w.buf, w.inject...)
-		}
-		w.ResponseWriter.Write(w.buf)
+		w.injectScript()
+		_ = w.commit()
 	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func (w *injectingResponseWriter) injectScript() {
+	if w.injected {
+		return
+	}
+
+	insertAt := findLastIndex(w.buf, []byte("</body>"))
+	if insertAt < 0 {
+		insertAt = findLastIndex(w.buf, []byte("</html>"))
+	}
+	if insertAt < 0 {
+		w.buf = append(w.buf, w.inject...)
+	} else {
+		newBuf := make([]byte, 0, len(w.buf)+len(w.inject))
+		newBuf = append(newBuf, w.buf[:insertAt]...)
+		newBuf = append(newBuf, w.inject...)
+		newBuf = append(newBuf, w.buf[insertAt:]...)
+		w.buf = newBuf
+	}
+	w.injected = true
+}
+
+func (w *injectingResponseWriter) commit() error {
+	if w.committed {
+		return nil
+	}
+	w.committed = true
+	w.Header().Del("Content-Length")
+	_, err := w.ResponseWriter.Write(w.buf)
+	return err
 }
 
 // findLastIndex finds the last occurrence of needle in haystack.
