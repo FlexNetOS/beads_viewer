@@ -2494,7 +2494,7 @@ When cass is healthy, the status bar shows agent activity:
 # Install cass (see https://github.com/Dicklesworthstone/coding_agent_session_search for full docs)
 brew install dicklesworthstone/tap/cass   # macOS
 # or
-cargo install cass                         # From source
+cargo install coding-agent-search          # From source (binary is `cass`)
 
 # Index your coding sessions
 cass index
