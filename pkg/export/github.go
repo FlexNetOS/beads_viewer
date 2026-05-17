@@ -240,10 +240,16 @@ func RepoHasContent(repoFullName string) (bool, error) {
 	cmd := exec.Command("gh", "api",
 		fmt.Sprintf("repos/%s/contents", repoFullName),
 		"-q", "length")
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// If 404 or empty, no content
-		return false, nil
+		outputText := strings.TrimSpace(string(output))
+		if repoContentsErrorIndicatesEmpty(outputText) {
+			return false, nil
+		}
+		if outputText == "" {
+			return false, fmt.Errorf("repo contents query failed: %w", err)
+		}
+		return false, fmt.Errorf("repo contents query failed: %w: %s", err, outputText)
 	}
 
 	length := strings.TrimSpace(string(output))
@@ -257,6 +263,14 @@ func repoContentsLengthIndicatesContent(length string) bool {
 	default:
 		return true
 	}
+}
+
+func repoContentsErrorIndicatesEmpty(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "404") ||
+		strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "repository is empty") ||
+		strings.Contains(lower, "this repository is empty")
 }
 
 // InitAndPush initializes a git repository and pushes to GitHub.
@@ -494,7 +508,10 @@ func DeployToGitHubPages(config GitHubDeployConfig) (*GitHubDeployResult, error)
 		fmt.Printf("\nUsing existing repository: %s\n", repoFullName)
 
 		// Check for existing content
-		hasContent, _ := RepoHasContent(repoFullName)
+		hasContent, err := RepoHasContent(repoFullName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check repository content: %w", err)
+		}
 		if hasContent && !config.ForceOverwrite && !config.SkipConfirmation {
 			fmt.Println("\nRepository has existing content!")
 			fmt.Println("Pushing will overwrite all existing files.")

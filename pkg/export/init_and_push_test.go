@@ -145,6 +145,111 @@ exit 0
 	}
 }
 
+func TestRepoHasContent_FailsClosedOnAPIError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stubs not supported on windows in this test")
+	}
+
+	binDir := t.TempDir()
+	ghScript := `#!/bin/sh
+set -eu
+if [ "${1-}" = "api" ]; then
+  echo "api rate limit exceeded"
+  exit 1
+fi
+exit 0
+`
+	writeExecutable(t, binDir, "gh", ghScript)
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, origPath))
+
+	hasContent, err := RepoHasContent("alice/repo")
+	if err == nil {
+		t.Fatalf("expected RepoHasContent to return an error for API failure")
+	}
+	if hasContent {
+		t.Fatalf("hasContent = true on API failure; want false")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+		t.Fatalf("expected API failure context in error, got: %v", err)
+	}
+}
+
+func TestRepoHasContent_TreatsNotFoundAsEmpty(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stubs not supported on windows in this test")
+	}
+
+	binDir := t.TempDir()
+	ghScript := `#!/bin/sh
+set -eu
+if [ "${1-}" = "api" ]; then
+  echo "gh: Not Found (HTTP 404)"
+  exit 1
+fi
+exit 0
+`
+	writeExecutable(t, binDir, "gh", ghScript)
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, origPath))
+
+	hasContent, err := RepoHasContent("alice/repo")
+	if err != nil {
+		t.Fatalf("RepoHasContent returned error for not-found response: %v", err)
+	}
+	if hasContent {
+		t.Fatalf("hasContent = true for not-found response; want false")
+	}
+}
+
+func TestInitAndPush_PropagatesRepoContentCheckFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stubs not supported on windows in this test")
+	}
+
+	binDir := t.TempDir()
+	gitLogPath := filepath.Join(binDir, "git.log")
+
+	ghScript := `#!/bin/sh
+set -eu
+if [ "${1-}" = "api" ]; then
+  echo "api rate limit exceeded"
+  exit 1
+fi
+exit 0
+`
+	gitScript := `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$GIT_LOG_FILE"
+exit 0
+`
+	writeExecutable(t, binDir, "gh", ghScript)
+	writeExecutable(t, binDir, "git", gitScript)
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, origPath))
+	t.Setenv("GIT_LOG_FILE", gitLogPath)
+
+	bundleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bundleDir, "index.html"), []byte("<!doctype html>"), 0644); err != nil {
+		t.Fatalf("WriteFile index.html: %v", err)
+	}
+
+	err := InitAndPush(bundleDir, "alice/repo", false)
+	if err == nil {
+		t.Fatalf("expected InitAndPush to return the content-check error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "rate limit") {
+		t.Fatalf("expected API failure context in InitAndPush error, got: %v", err)
+	}
+
+	if gitLog, readErr := os.ReadFile(gitLogPath); readErr == nil && strings.TrimSpace(string(gitLog)) != "" {
+		t.Fatalf("InitAndPush ran git commands after content-check failure:\n%s", gitLog)
+	}
+}
+
 func TestPushToGHPagesBranch_UsesForceWithLeaseAfterFetchingRemoteBranch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script stubs not supported on windows in this test")
