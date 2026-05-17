@@ -3,6 +3,7 @@ package updater
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -28,6 +29,7 @@ const (
 	baseURL   = "https://api.github.com/repos/" + repoOwner + "/" + repoName
 
 	maxReleaseMetadataBytes = 1 << 20
+	maxDownloadBytes        = 512 << 20
 )
 
 // githubToken returns a GitHub personal access token from the environment,
@@ -68,9 +70,25 @@ func safeAssetName(name string) (string, error) {
 }
 
 func decodeReleaseMetadata(body io.Reader) (Release, error) {
-	var rel Release
-	if err := json.NewDecoder(io.LimitReader(body, maxReleaseMetadataBytes)).Decode(&rel); err != nil {
+	data, err := io.ReadAll(io.LimitReader(body, maxReleaseMetadataBytes+1))
+	if err != nil {
 		return Release{}, err
+	}
+	if int64(len(data)) > maxReleaseMetadataBytes {
+		return Release{}, fmt.Errorf("release metadata exceeds %d bytes", maxReleaseMetadataBytes)
+	}
+
+	var rel Release
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&rel); err != nil {
+		return Release{}, err
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return Release{}, fmt.Errorf("release metadata contains multiple JSON values")
+		}
+		return Release{}, fmt.Errorf("release metadata has trailing data: %w", err)
 	}
 	return rel, nil
 }
@@ -472,6 +490,13 @@ func (r *Release) FindChecksumAsset() *Asset {
 // If expectedSize is > 0, the download is size-verified against the HTTP Content-Length
 // (when present) and the number of bytes written.
 func downloadFile(url, destPath string, expectedSize int64) error {
+	if expectedSize < 0 {
+		return fmt.Errorf("download size cannot be negative: %d", expectedSize)
+	}
+	if expectedSize > maxDownloadBytes {
+		return fmt.Errorf("download size %d exceeds maximum %d", expectedSize, maxDownloadBytes)
+	}
+
 	client := &http.Client{
 		Timeout: 5 * time.Minute,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -518,17 +543,12 @@ func downloadFile(url, destPath string, expectedSize int64) error {
 	}
 
 	// Cap download size to prevent unbounded disk writes from malicious/corrupted responses.
-	// Allow 10% overhead for encoding variance; minimum 100MB for safety.
-	var reader io.Reader = resp.Body
+	var limit int64 = maxDownloadBytes + 1
 	if expectedSize > 0 {
-		maxSize := expectedSize + expectedSize/10
-		if maxSize < 100*1024*1024 {
-			maxSize = 100 * 1024 * 1024
-		}
-		reader = io.LimitReader(resp.Body, maxSize)
+		limit = expectedSize + 1
 	}
 
-	n, err := io.Copy(out, reader)
+	n, err := io.Copy(out, io.LimitReader(resp.Body, limit))
 	if closeErr := out.Close(); err == nil {
 		err = closeErr
 	}
@@ -538,6 +558,9 @@ func downloadFile(url, destPath string, expectedSize int64) error {
 
 	if expectedSize > 0 && n != expectedSize {
 		return fmt.Errorf("downloaded size mismatch: expected %d, got %d", expectedSize, n)
+	}
+	if expectedSize == 0 && n > maxDownloadBytes {
+		return fmt.Errorf("download exceeded maximum size %d", maxDownloadBytes)
 	}
 
 	return nil
@@ -564,16 +587,26 @@ func parseChecksums(checksumPath string) (map[string]string, error) {
 			continue
 		}
 
-		hash := parts[0]
-		if len(line) < len(hash) || !strings.HasPrefix(line, hash) {
+		rawHash := parts[0]
+		hash := strings.ToLower(rawHash)
+		if len(hash) != sha256.Size*2 {
+			continue
+		}
+		if _, err := hex.DecodeString(hash); err != nil {
+			continue
+		}
+		if len(line) < len(rawHash) || !strings.HasPrefix(line, rawHash) {
 			continue
 		}
 
-		filename := strings.TrimSpace(line[len(hash):])
+		filename := strings.TrimSpace(line[len(rawHash):])
 		if filename == "" {
 			continue
 		}
 
+		if _, exists := checksums[filename]; exists {
+			return nil, fmt.Errorf("duplicate checksum entry for %s", filename)
+		}
 		checksums[filename] = hash
 	}
 	return checksums, nil
@@ -581,6 +614,14 @@ func parseChecksums(checksumPath string) (map[string]string, error) {
 
 // verifyChecksum verifies the SHA256 checksum of a file
 func verifyChecksum(filePath, expectedHash string) error {
+	expectedHash = strings.ToLower(strings.TrimSpace(expectedHash))
+	if len(expectedHash) != sha256.Size*2 {
+		return fmt.Errorf("invalid sha256 checksum length: got %d, want %d", len(expectedHash), sha256.Size*2)
+	}
+	if _, err := hex.DecodeString(expectedHash); err != nil {
+		return fmt.Errorf("invalid sha256 checksum %q: %w", expectedHash, err)
+	}
+
 	f, err := os.Open(filePath)
 	if err != nil {
 		return err
@@ -633,6 +674,9 @@ func extractBinaryFromTarGz(archivePath, destPath string) error {
 		// Look for the bv binary (might be ./bv, bv, or just bv)
 		name := filepath.Base(header.Name)
 		if name == "bv" || name == "bv.exe" {
+			if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+				continue
+			}
 			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 			if err != nil {
 				return fmt.Errorf("failed to create binary: %w", err)
@@ -662,6 +706,9 @@ func extractBinaryFromZip(archivePath, destPath string) error {
 	for _, file := range zr.File {
 		name := filepath.Base(file.Name)
 		if name != "bv" && name != "bv.exe" {
+			continue
+		}
+		if file.FileInfo().IsDir() {
 			continue
 		}
 
