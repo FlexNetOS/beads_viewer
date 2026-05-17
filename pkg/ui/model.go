@@ -867,7 +867,7 @@ func NewModel(issues []model.Issue, activeRecipe *recipe.Recipe, beadsPath strin
 			Issue:      issues[i],
 			GraphScore: graphStats.GetPageRankScore(issues[i].ID),
 			Impact:     graphStats.GetCriticalPathScore(issues[i].ID),
-			RepoPrefix: ExtractRepoPrefix(issues[i].ID),
+			RepoPrefix: issueRepoKey(issues[i]),
 		}
 	}
 
@@ -2222,7 +2222,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Issue:      m.issues[i],
 				GraphScore: m.analysis.GetPageRankScore(m.issues[i].ID),
 				Impact:     m.analysis.GetCriticalPathScore(m.issues[i].ID),
-				RepoPrefix: ExtractRepoPrefix(m.issues[i].ID),
+				RepoPrefix: issueRepoKey(m.issues[i]),
 			}
 			item.TriageScore = m.triageScores[m.issues[i].ID]
 			if reasons, exists := m.triageReasons[m.issues[i].ID]; exists {
@@ -6561,7 +6561,7 @@ func (m *Model) setActiveRecipe(r *recipe.Recipe) {
 func (m *Model) matchesCurrentFilter(issue model.Issue) bool {
 	// Workspace repo filter (nil = all repos)
 	if m.workspaceMode && m.activeRepos != nil {
-		repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
+		repoKey := issueRepoKey(issue)
 		if repoKey != "" && !m.activeRepos[repoKey] {
 			return false
 		}
@@ -6609,7 +6609,7 @@ func (m *Model) filteredIssuesForActiveView() []model.Issue {
 	if recipeFilterActive {
 		for _, issue := range m.issues {
 			if m.workspaceMode && m.activeRepos != nil {
-				repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
+				repoKey := issueRepoKey(issue)
 				if repoKey != "" && !m.activeRepos[repoKey] {
 					continue
 				}
@@ -6682,7 +6682,7 @@ func (m *Model) applyFilter() {
 				GraphScore: m.analysis.GetPageRankScore(issue.ID),
 				Impact:     m.analysis.GetCriticalPathScore(issue.ID),
 				DiffStatus: m.getDiffStatus(issue.ID),
-				RepoPrefix: ExtractRepoPrefix(issue.ID),
+				RepoPrefix: issueRepoKey(issue),
 			}
 			// Add triage data (bv-151)
 			item.TriageScore = m.triageScores[issue.ID]
@@ -6870,7 +6870,7 @@ func (m *Model) applyRecipe(r *recipe.Recipe) {
 
 		// Workspace repo filter (nil = all repos)
 		if m.workspaceMode && m.activeRepos != nil {
-			repoKey := strings.ToLower(ExtractRepoPrefix(issue.ID))
+			repoKey := issueRepoKey(issue)
 			if repoKey != "" && !m.activeRepos[repoKey] {
 				include = false
 			}
@@ -6936,7 +6936,7 @@ func (m *Model) applyRecipe(r *recipe.Recipe) {
 				GraphScore: m.analysis.GetPageRankScore(issue.ID),
 				Impact:     m.analysis.GetCriticalPathScore(issue.ID),
 				DiffStatus: m.getDiffStatus(issue.ID),
-				RepoPrefix: ExtractRepoPrefix(issue.ID),
+				RepoPrefix: issueRepoKey(issue),
 			}
 			// Add triage data (bv-151)
 			item.TriageScore = m.triageScores[issue.ID]

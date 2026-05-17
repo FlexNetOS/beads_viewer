@@ -193,13 +193,22 @@ func (l *AggregateLoader) loadSingleRepo(repo RepoConfig) ([]model.Issue, error)
 	return namespacedIssues, nil
 }
 
+func sourceRepoKeyFromPrefix(prefix string) string {
+	key := strings.TrimSpace(prefix)
+	key = strings.TrimRight(key, "-:_")
+	return strings.ToLower(key)
+}
+
 // namespaceIssues adds the prefix to all issue IDs and dependency references
 // It mutates the issues slice in place to reduce allocations.
 func (l *AggregateLoader) namespaceIssues(issues []model.Issue, prefix string, localIDs map[string]bool) []model.Issue {
+	sourceRepo := sourceRepoKeyFromPrefix(prefix)
+
 	for i := range issues {
 		// Mutate issue in place
 		issue := &issues[i]
 		issue.ID = QualifyID(issue.ID, prefix)
+		issue.SourceRepo = sourceRepo
 
 		// Namespace dependency references in place
 		for _, dep := range issue.Dependencies {

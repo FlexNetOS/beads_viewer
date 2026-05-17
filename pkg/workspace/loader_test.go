@@ -5,12 +5,20 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/workspace"
 )
+
+func requireWorkspaceLoaderString(t *testing.T, name, got, want string) {
+	t.Helper()
+	if strings.Compare(got, want) != 0 {
+		t.Fatalf("expected %s %q, got %q", name, want, got)
+	}
+}
 
 // createTestBeadsFile creates a .beads/beads.jsonl file with test issues
 func createTestBeadsFile(t *testing.T, repoPath string, issues []model.Issue) {
@@ -102,6 +110,47 @@ func TestAggregateLoaderLoadAll(t *testing.T) {
 	if !issueIDs["web-UI-1"] {
 		t.Error("Expected to find web-UI-1 (namespaced)")
 	}
+
+	for _, issue := range issues {
+		switch issue.ID {
+		case "api-AUTH-1", "api-AUTH-2":
+			requireWorkspaceLoaderString(t, issue.ID+" SourceRepo", issue.SourceRepo, "api")
+		case "web-UI-1":
+			requireWorkspaceLoaderString(t, issue.ID+" SourceRepo", issue.SourceRepo, "web")
+		}
+	}
+}
+
+func TestAggregateLoaderSourceRepoKeyForHyphenatedDefaultPrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	repoPath := filepath.Join(tmpDir, "backend-service")
+	if err := os.MkdirAll(repoPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createTestBeadsFile(t, repoPath, []model.Issue{
+		{ID: "AUTH-1", Title: "Auth feature", Status: model.StatusOpen, Priority: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	})
+
+	config := &workspace.Config{
+		Name: "test-workspace",
+		Repos: []workspace.RepoConfig{
+			{Path: "backend-service"},
+		},
+	}
+
+	loader := workspace.NewAggregateLoader(config, tmpDir)
+	issues, _, err := loader.LoadAll(context.Background())
+	if err != nil {
+		t.Fatalf("LoadAll() error = %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("len(issues) = %d, want 1", len(issues))
+	}
+	if issues[0].ID != "backend-service-AUTH-1" {
+		t.Fatalf("issue ID = %q, want %q", issues[0].ID, "backend-service-AUTH-1")
+	}
+	requireWorkspaceLoaderString(t, "SourceRepo", issues[0].SourceRepo, "backend-service")
 }
 
 func TestAggregateLoaderPartialFailure(t *testing.T) {
