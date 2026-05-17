@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -4341,6 +4342,11 @@ func (m Model) handleHistoryKeys(msg tea.KeyMsg) Model {
 
 // getCommitURL returns the GitHub/GitLab commit URL for a SHA (bv-xf4p)
 func (m Model) getCommitURL(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return ""
+	}
+
 	// Get git remote URL
 	cmd := exec.Command("git", "remote", "get-url", "origin")
 	cmd.Dir = m.workDir
@@ -4365,6 +4371,11 @@ func (m Model) getCommitURL(sha string) string {
 
 // gitRemoteToWebURL converts a git remote URL to a web URL (bv-xf4p)
 func gitRemoteToWebURL(remote string) string {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return ""
+	}
+
 	// Handle SSH URLs: git@github.com:user/repo.git
 	if strings.HasPrefix(remote, "git@") {
 		// Remove git@ prefix and .git suffix
@@ -4372,16 +4383,41 @@ func gitRemoteToWebURL(remote string) string {
 		remote = strings.TrimSuffix(remote, ".git")
 		// Replace : with /
 		remote = strings.Replace(remote, ":", "/", 1)
-		return "https://" + remote
+		return normalizeGitRemoteWebURL("https://" + remote)
 	}
 
 	// Handle HTTPS URLs: https://github.com/user/repo.git
-	if strings.HasPrefix(remote, "https://") || strings.HasPrefix(remote, "http://") {
-		remote = strings.TrimSuffix(remote, ".git")
-		return remote
+	if strings.HasPrefix(remote, "https://") || strings.HasPrefix(remote, "http://") ||
+		strings.HasPrefix(remote, "ssh://") {
+		return normalizeGitRemoteWebURL(remote)
 	}
 
 	return ""
+}
+
+func normalizeGitRemoteWebURL(remote string) string {
+	u, err := url.Parse(remote)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+
+	switch u.Scheme {
+	case "https", "http":
+	case "ssh":
+		u.Scheme = "https"
+		u.User = nil
+		u.Host = u.Hostname()
+	default:
+		return ""
+	}
+
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = strings.TrimSuffix(strings.TrimRight(u.Path, "/"), ".git")
+	if u.Path == "" || u.Path == "/" {
+		return ""
+	}
+	return u.String()
 }
 
 // openBrowserURL opens a URL in the default browser (bv-xf4p)
