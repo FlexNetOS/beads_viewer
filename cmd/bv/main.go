@@ -8576,6 +8576,23 @@ func resolveSingleRepoWatchFile(projectDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("getting beads directory: %w", err)
 	}
+
+	// Watch whatever source the smart loader actually selected so file events
+	// match the source bv reads from. For br repos this is typically the
+	// SQLite beads.db; without this, the watcher fires only on JSONL writes
+	// even though br updates land in SQLite first.
+	sources, discoverErr := datasource.DiscoverSources(datasource.DiscoveryOptions{
+		BeadsDir:               beadsDir,
+		RepoPath:               projectDir,
+		ValidateAfterDiscovery: true,
+		IncludeInvalid:         false,
+	})
+	if discoverErr == nil && len(sources) > 0 {
+		if best, selErr := datasource.SelectBestSource(sources); selErr == nil && best.Path != "" {
+			return best.Path, nil
+		}
+	}
+
 	beadsPath, err := loader.FindJSONLPath(beadsDir)
 	if err != nil {
 		return "", fmt.Errorf("finding Beads JSONL file: %w", err)
