@@ -309,7 +309,7 @@ func getGitHead(repoPath string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// hashBeads creates a hash of bead IDs and statuses
+// hashBeads creates a hash of all bead fields that are embedded in reports.
 func hashBeads(beads []BeadInfo) string {
 	if len(beads) == 0 {
 		return hex.EncodeToString(sha256.New().Sum(nil))[:12]
@@ -317,7 +317,7 @@ func hashBeads(beads []BeadInfo) string {
 
 	entries := make([]string, 0, len(beads))
 	for _, b := range beads {
-		entries = append(entries, b.ID+"\x00"+b.Status)
+		entries = append(entries, b.ID+"\x00"+b.Title+"\x00"+b.Status)
 	}
 	sort.Strings(entries)
 

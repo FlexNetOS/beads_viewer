@@ -290,25 +290,30 @@ func TestHistoryCache_Stats(t *testing.T) {
 
 func TestHashBeads(t *testing.T) {
 	beads1 := []BeadInfo{
-		{ID: "bv-1", Status: "open"},
-		{ID: "bv-2", Status: "closed"},
+		{ID: "bv-1", Title: "First", Status: "open"},
+		{ID: "bv-2", Title: "Second", Status: "closed"},
 	}
 	beads2 := []BeadInfo{
-		{ID: "bv-1", Status: "open"},
-		{ID: "bv-2", Status: "closed"},
+		{ID: "bv-1", Title: "First", Status: "open"},
+		{ID: "bv-2", Title: "Second", Status: "closed"},
 	}
 	beads3 := []BeadInfo{
-		{ID: "bv-1", Status: "closed"}, // Different status
-		{ID: "bv-2", Status: "closed"},
+		{ID: "bv-1", Title: "First", Status: "closed"}, // Different status
+		{ID: "bv-2", Title: "Second", Status: "closed"},
+	}
+	beads4 := []BeadInfo{
+		{ID: "bv-1", Title: "First renamed", Status: "open"}, // Different title
+		{ID: "bv-2", Title: "Second", Status: "closed"},
 	}
 	beadsReordered := []BeadInfo{
-		{ID: "bv-2", Status: "closed"},
-		{ID: "bv-1", Status: "open"},
+		{ID: "bv-2", Title: "Second", Status: "closed"},
+		{ID: "bv-1", Title: "First", Status: "open"},
 	}
 
 	hash1 := hashBeads(beads1)
 	hash2 := hashBeads(beads2)
 	hash3 := hashBeads(beads3)
+	hash4 := hashBeads(beads4)
 	hashReordered := hashBeads(beadsReordered)
 
 	// Same input should produce same hash
@@ -321,7 +326,10 @@ func TestHashBeads(t *testing.T) {
 
 	// Different input should produce different hash
 	if hash1 == hash3 {
-		t.Error("Different beads should produce different hash")
+		t.Error("Different bead statuses should produce different hash")
+	}
+	if hash1 == hash4 {
+		t.Error("Different bead titles should produce different hash")
 	}
 
 	// Hash should be 12 chars
