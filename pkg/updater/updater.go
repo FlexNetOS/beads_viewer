@@ -32,6 +32,10 @@ const (
 	maxDownloadBytes        = 512 << 20
 )
 
+// maxExtractedBinaryBytes is a variable so tests can shrink the limit without
+// constructing large archives. Production keeps it aligned with maxDownloadBytes.
+var maxExtractedBinaryBytes int64 = maxDownloadBytes
+
 // githubToken returns a GitHub personal access token from the environment,
 // checking GITHUB_TOKEN first, then GH_TOKEN. Returns empty string if
 // neither is set. Using a token raises the API rate limit from 60 to
@@ -677,20 +681,7 @@ func extractBinaryFromTarGz(archivePath, destPath string) error {
 			if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
 				continue
 			}
-			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-			if err != nil {
-				return fmt.Errorf("failed to create binary: %w", err)
-			}
-
-			_, copyErr := io.Copy(out, tr)
-			closeErr := out.Close()
-			if copyErr != nil {
-				return fmt.Errorf("failed to extract binary: %w", copyErr)
-			}
-			if closeErr != nil {
-				return fmt.Errorf("failed to flush extracted binary: %w", closeErr)
-			}
-			return nil
+			return copyExtractedBinary(tr, destPath, header.Size)
 		}
 	}
 	return fmt.Errorf("binary not found in archive")
@@ -711,34 +702,60 @@ func extractBinaryFromZip(archivePath, destPath string) error {
 		if file.FileInfo().IsDir() {
 			continue
 		}
+		if maxExtractedBinaryBytes < 0 {
+			return fmt.Errorf("extracted binary size limit cannot be negative: %d", maxExtractedBinaryBytes)
+		}
+		if file.UncompressedSize64 > uint64(maxExtractedBinaryBytes) {
+			return fmt.Errorf("extracted binary size %d exceeds maximum %d", file.UncompressedSize64, maxExtractedBinaryBytes)
+		}
 
 		src, err := file.Open()
 		if err != nil {
 			return fmt.Errorf("failed to open zipped binary: %w", err)
 		}
 
-		out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-		if err != nil {
-			src.Close()
-			return fmt.Errorf("failed to create binary: %w", err)
-		}
-
-		_, copyErr := io.Copy(out, src)
+		copyErr := copyExtractedBinary(src, destPath, int64(file.UncompressedSize64))
 		srcCloseErr := src.Close()
-		closeErr := out.Close()
 		if copyErr != nil {
-			return fmt.Errorf("failed to extract binary: %w", copyErr)
+			return copyErr
 		}
 		if srcCloseErr != nil {
 			return fmt.Errorf("failed to close zipped binary: %w", srcCloseErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("failed to flush extracted binary: %w", closeErr)
 		}
 		return nil
 	}
 
 	return fmt.Errorf("binary not found in archive")
+}
+
+func copyExtractedBinary(src io.Reader, destPath string, declaredSize int64) error {
+	if maxExtractedBinaryBytes < 0 {
+		return fmt.Errorf("extracted binary size limit cannot be negative: %d", maxExtractedBinaryBytes)
+	}
+	if declaredSize < 0 {
+		return fmt.Errorf("extracted binary size cannot be negative: %d", declaredSize)
+	}
+	if declaredSize > maxExtractedBinaryBytes {
+		return fmt.Errorf("extracted binary size %d exceeds maximum %d", declaredSize, maxExtractedBinaryBytes)
+	}
+
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create binary: %w", err)
+	}
+
+	n, copyErr := io.Copy(out, io.LimitReader(src, maxExtractedBinaryBytes+1))
+	closeErr := out.Close()
+	if copyErr != nil {
+		return fmt.Errorf("failed to extract binary: %w", copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("failed to flush extracted binary: %w", closeErr)
+	}
+	if n > maxExtractedBinaryBytes {
+		return fmt.Errorf("extracted binary exceeds maximum size %d", maxExtractedBinaryBytes)
+	}
+	return nil
 }
 
 // GetCurrentBinaryPath returns the path to the currently running binary
