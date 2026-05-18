@@ -757,6 +757,10 @@ func rewriteRobotValueIntent(rest []string, context, boolFlag, valueFlag, defaul
 		rest = rest[1:]
 	} else if defaultValue != "" {
 		out = append(out, valueFlag, defaultValue)
+	} else if valueFlag != "" && boolFlag == "" {
+		out = append(out, prefix...)
+		out = append(out, rewriteAgentIntentFlagAliases(rest, context)...)
+		return append(out, valueFlag)
 	}
 	out = append(out, prefix...)
 	return append(out, rewriteAgentIntentFlagAliases(rest, context)...)
@@ -893,7 +897,7 @@ func limitFlagForAgentContext(context string) string {
 }
 
 func normalizeRobotCommandName(value string) string {
-	value = strings.TrimSpace(value)
+	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" || strings.HasPrefix(value, "robot-") {
 		return value
 	}

@@ -465,6 +465,11 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--robot-schema", "--schema-command", "robot-triage", "--format", "json"},
 		},
 		{
+			name: "schema normalizes mixed case command name",
+			args: []string{"schema", "Robot-Triage", "--json"},
+			want: []string{"--robot-schema", "--schema-command", "robot-triage", "--format", "json"},
+		},
+		{
 			name: "search subcommand",
 			args: []string{"search", "login", "oauth", "--json", "--limit=5"},
 			want: []string{"--search", "login oauth", "--robot-search", "--format", "json", "--search-limit=5"},
@@ -510,6 +515,16 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 			want: []string{"--robot-related", "bv-123", "--format", "json", "--related-max-results=2"},
 		},
 		{
+			name: "missing value command keeps required flag after output alias",
+			args: []string{"robot-related", "--json"},
+			want: []string{"--format", "json", "--robot-related"},
+		},
+		{
+			name: "missing value command keeps required flag after native options",
+			args: []string{"robot-confirm-correlation", "--correlation-by", "agent", "--json"},
+			want: []string{"--correlation-by", "agent", "--format", "json", "--robot-confirm-correlation"},
+		},
+		{
 			name: "canonical diff command name",
 			args: []string{"robot-diff", "HEAD~1", "--json"},
 			want: []string{"--robot-diff", "--diff-since", "HEAD~1", "--format", "json"},
@@ -535,6 +550,29 @@ func TestAgentIntentArgRewrite(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			requireArgs(t, rewriteAgentIntentArgs(tt.args), tt.want)
 		})
+	}
+}
+
+func TestAgentIntentValueCommandMissingTargetFailsBeforeTUI(t *testing.T) {
+	exe := buildTestBinary(t)
+
+	stdout, stderr, err := runCommandWithTimeout(t, t.TempDir(), exe, "robot-related", "--json")
+	if err == nil {
+		t.Fatalf("expected missing value command to fail\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected empty stdout for missing value command, got:\n%s", stdout)
+	}
+	for _, want := range []string{
+		"flag needs an argument: --robot-related",
+		"Use --robot-related VALUE.",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q\nstderr:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "could not open a new TTY") {
+		t.Fatalf("missing value command fell through to the TUI:\n%s", stderr)
 	}
 }
 
@@ -565,6 +603,7 @@ func TestAgentIntentAliasesOutputJSON(t *testing.T) {
 		{"robot-schema", "triage", "--json"},
 		{"schema", "triage", "--json"},
 		{"schema", "--json", "triage"},
+		{"schema", "Robot-Triage", "--json"},
 		{"robot-graph", "mermaid", "--json"},
 		{"graph", "--json", "mermaid"},
 		{"--name", "backend", "--json"},
