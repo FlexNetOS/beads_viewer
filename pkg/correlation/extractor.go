@@ -131,6 +131,7 @@ func (e *Extractor) buildGitLogArgs(opts ExtractOptions) []string {
 	args := []string{
 		"log",
 		"-p",                             // Include patch/diff
+		"--unified=0",                    // Zero context: parser only needs +/- JSONL lines, not unchanged records (#160)
 		"--follow",                       // Track renames; requires a single pathspec (handled below)
 		"--format=" + gitLogHeaderFormat, // Custom format for commit info
 		"--",
