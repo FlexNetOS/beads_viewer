@@ -2177,3 +2177,33 @@ func repoRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+func TestIssuesFingerprintDetectsContentChangesOrderIndependently(t *testing.T) {
+	t1 := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	base := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, UpdatedAt: t1},
+		{ID: "B", Status: model.StatusInProgress, UpdatedAt: t1},
+	}
+	// Reordering the same content must not change the fingerprint (#159).
+	reordered := []model.Issue{base[1], base[0]}
+	if issuesFingerprint(base) != issuesFingerprint(reordered) {
+		t.Fatalf("fingerprint must be order-independent")
+	}
+	// A status change must change the fingerprint.
+	statusChanged := []model.Issue{
+		{ID: "A", Status: model.StatusClosed, UpdatedAt: t1},
+		{ID: "B", Status: model.StatusInProgress, UpdatedAt: t1},
+	}
+	if issuesFingerprint(base) == issuesFingerprint(statusChanged) {
+		t.Fatalf("fingerprint must change when an issue's status changes")
+	}
+	// An updated_at change must change the fingerprint.
+	timeChanged := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, UpdatedAt: t2},
+		{ID: "B", Status: model.StatusInProgress, UpdatedAt: t1},
+	}
+	if issuesFingerprint(base) == issuesFingerprint(timeChanged) {
+		t.Fatalf("fingerprint must change when an issue's updated_at changes")
+	}
+}
