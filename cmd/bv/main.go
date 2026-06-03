@@ -1324,15 +1324,18 @@ func printFlagSection(out io.Writer, allFlags *flag.FlagSet, title string, names
 	fmt.Fprintln(out)
 }
 
-// issuesFingerprint returns a cheap, order-independent fingerprint of the fields
-// that affect the exported site (id, status, updated time). The --watch-export
+// issuesFingerprint returns an order-independent fingerprint of the issue set
+// that changes whenever anything the exported site renders changes. It folds in
+// the canonical per-issue content + dependency hashes — the same signal the
+// analysis cache uses for change detection — so it catches title/body/label/
+// priority/dependency edits, not just an updated_at bump. The --watch-export
 // loop uses it to skip a full re-export when a file change didn't actually
 // change any issue content (#159).
 func issuesFingerprint(issues []model.Issue) string {
 	keys := make([]string, len(issues))
 	for i, iss := range issues {
-		keys[i] = iss.ID + "\x1f" + string(iss.Status) + "\x1f" +
-			iss.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		fp := analysis.ComputeIssueFingerprint(iss)
+		keys[i] = fp.ID + "\x1f" + fp.ContentHash + "\x1f" + fp.DependencyHash
 	}
 	sort.Strings(keys)
 	h := fnv.New64a()

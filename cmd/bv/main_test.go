@@ -2206,4 +2206,22 @@ func TestIssuesFingerprintDetectsContentChangesOrderIndependently(t *testing.T) 
 	if issuesFingerprint(base) == issuesFingerprint(timeChanged) {
 		t.Fatalf("fingerprint must change when an issue's updated_at changes")
 	}
+	// A title change with NO updated_at bump must still change the fingerprint —
+	// the previous id/status/updated_at-only fingerprint missed this (#159).
+	titleChanged := []model.Issue{
+		{ID: "A", Title: "renamed", Status: model.StatusOpen, UpdatedAt: t1},
+		{ID: "B", Status: model.StatusInProgress, UpdatedAt: t1},
+	}
+	if issuesFingerprint(base) == issuesFingerprint(titleChanged) {
+		t.Fatalf("fingerprint must change when a title changes without an updated_at bump")
+	}
+	// A dependency change with no updated_at bump must also be detected.
+	depChanged := []model.Issue{
+		{ID: "A", Status: model.StatusOpen, UpdatedAt: t1,
+			Dependencies: []*model.Dependency{{DependsOnID: "B", Type: model.DepBlocks}}},
+		{ID: "B", Status: model.StatusInProgress, UpdatedAt: t1},
+	}
+	if issuesFingerprint(base) == issuesFingerprint(depChanged) {
+		t.Fatalf("fingerprint must change when a dependency changes without an updated_at bump")
+	}
 }
