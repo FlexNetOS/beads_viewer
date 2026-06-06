@@ -81,8 +81,22 @@ type beadSnapshot struct {
 	Title  string
 }
 
-// Extract extracts bead lifecycle events from git history
+// Extract extracts bead lifecycle events from git history.
+//
+// It reconstructs lifecycle events from per-commit JSONL snapshot differences
+// (extractViaSnapshots) instead of asking git to produce a full textual patch
+// (`git log -p`) of the followed beads blob. The `-p` path runs git's diff over
+// the whole multi-MB JSONL at every commit (O(blob x commits)) and dominated
+// `--robot-triage` on large repos (#161). The snapshot path reads each blob
+// (~50x cheaper than diffing it) and computes the changed record lines in Go,
+// feeding the unchanged parseDiff so event semantics are identical.
 func (e *Extractor) Extract(opts ExtractOptions) ([]BeadEvent, error) {
+	return e.extractViaSnapshots(opts)
+}
+
+// extractViaGitLogPatch is the legacy `git log -p` extraction path, retained for
+// reference and differential testing against extractViaSnapshots.
+func (e *Extractor) extractViaGitLogPatch(opts ExtractOptions) ([]BeadEvent, error) {
 	// Build git log command
 	logArgs := e.buildGitLogArgs(opts)
 
