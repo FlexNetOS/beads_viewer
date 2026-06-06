@@ -51,8 +51,15 @@ func (e *Extractor) extractViaSnapshots(opts ExtractOptions) ([]BeadEvent, error
 		return nil, nil
 	}
 
-	// Batch all blob reads through a single `git cat-file --batch` process so we
-	// pay one fork instead of two `git show` invocations per commit.
+	// For each commit diff the followed file's blob at the commit against its
+	// blob in the commit's first parent (the same two sides git's `-p --follow`
+	// compares). Both blobs are batched through a single `git cat-file --batch`
+	// so we pay one fork for the whole pass. We intentionally read the true
+	// SHA^ blob rather than carrying the previous --follow entry forward: the
+	// chronological predecessor in the --follow list is not always the commit's
+	// first parent (merges / history rewrites), and using it produces spurious
+	// events. Reading SHA^ keeps the output byte-identical to the legacy path
+	// (verified by the differential test).
 	specs := make([]string, 0, len(commits)*2)
 	for _, c := range commits {
 		specs = append(specs, c.info.SHA+":"+c.path)
@@ -66,22 +73,22 @@ func (e *Extractor) extractViaSnapshots(opts ExtractOptions) ([]BeadEvent, error
 	}
 
 	var events []BeadEvent
-	for _, c := range commits {
-		newBlob := blobs[c.info.SHA+":"+c.path]
-		var oldBlob []byte
+	for i := range commits {
+		c := commits[i]
+		newSet := recordLineSet(blobs[c.info.SHA+":"+c.path])
+		var oldSet map[string]int
 		if c.hadParent {
-			oldBlob = blobs[c.info.SHA+"^:"+c.parentPath]
+			oldSet = recordLineSet(blobs[c.info.SHA+"^:"+c.parentPath])
 		}
 
-		diffText := synthesizeRecordDiff(oldBlob, newBlob)
-		if len(diffText) == 0 {
-			continue
+		diffText := synthesizeRecordDiffSets(oldSet, newSet)
+		if len(diffText) > 0 {
+			events = append(events, e.parseDiff(diffText, c.info, opts.BeadID)...)
 		}
-		events = append(events, e.parseDiff(diffText, c.info, opts.BeadID)...)
 	}
 
 	// snapshotCommits returns newest-first (git log order); match the legacy
-	// `Extract` contract which sorts chronologically before returning.
+	// Extract contract which sorts chronologically before returning.
 	reverseEvents(events)
 	return events, nil
 }
@@ -339,23 +346,25 @@ func readFull(r *bufio.Reader, buf []byte) (int, error) {
 // Only record lines (those beginning with '{') are emitted, matching what the
 // downstream parser consumes. Lines unchanged between the two blobs are omitted.
 func synthesizeRecordDiff(oldBlob, newBlob []byte) []byte {
-	oldSet := recordLineSet(oldBlob)
-	newSet := recordLineSet(newBlob)
+	return synthesizeRecordDiffSets(recordLineSet(oldBlob), recordLineSet(newBlob))
+}
 
+// synthesizeRecordDiffSets is synthesizeRecordDiff over already-hashed record
+// multisets, so the carry-forward extraction loop hashes each blob only once.
+// A nil oldSet means "no parent" — every record reads as an addition.
+func synthesizeRecordDiffSets(oldSet, newSet map[string]int) []byte {
 	var buf bytes.Buffer
-	// Removed: present in old, absent in new.
+	// Removed: present in old, absent (or fewer) in new.
 	for line, n := range oldSet {
-		delta := n - newSet[line]
-		for i := 0; i < delta; i++ {
+		for i := 0; i < n-newSet[line]; i++ {
 			buf.WriteByte('-')
 			buf.WriteString(line)
 			buf.WriteByte('\n')
 		}
 	}
-	// Added: present in new, absent in old.
+	// Added: present in new, absent (or fewer) in old.
 	for line, n := range newSet {
-		delta := n - oldSet[line]
-		for i := 0; i < delta; i++ {
+		for i := 0; i < n-oldSet[line]; i++ {
 			buf.WriteByte('+')
 			buf.WriteString(line)
 			buf.WriteByte('\n')
