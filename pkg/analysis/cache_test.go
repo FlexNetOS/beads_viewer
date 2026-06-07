@@ -452,8 +452,8 @@ func TestRobotDiskCache_WritesAndHits(t *testing.T) {
 	if err := json.Unmarshal(raw, &cf); err != nil {
 		t.Fatalf("parsing cache json: %v", err)
 	}
-	if cf.Version != 1 {
-		t.Fatalf("cache version: got %d, want %d", cf.Version, 1)
+	if cf.Version != 2 {
+		t.Fatalf("cache version: got %d, want %d", cf.Version, 2)
 	}
 	if _, ok := cf.Entries[fullKey]; !ok {
 		t.Fatalf("expected cache entry for key %q", fullKey)
@@ -546,8 +546,8 @@ func TestRobotDiskCache_BeadsDBDirectoryUsesChildModTime(t *testing.T) {
 	if err := json.Unmarshal(raw, &cf); err != nil {
 		t.Fatalf("parsing cache json: %v", err)
 	}
-	if cf.Version != 1 {
-		t.Fatalf("cache version: got %d, want %d", cf.Version, 1)
+	if cf.Version != 2 {
+		t.Fatalf("cache version: got %d, want %d", cf.Version, 2)
 	}
 	entry, ok := cf.Entries[fullKey]
 	if !ok {
@@ -706,8 +706,8 @@ func TestRobotDiskCache_EvictsToMaxEntries(t *testing.T) {
 	if err := json.Unmarshal(raw, &cf); err != nil {
 		t.Fatalf("parsing cache json: %v", err)
 	}
-	if cf.Version != 1 {
-		t.Fatalf("cache version: got %d, want %d", cf.Version, 1)
+	if cf.Version != 2 {
+		t.Fatalf("cache version: got %d, want %d", cf.Version, 2)
 	}
 	if len(cf.Entries) > 10 {
 		t.Fatalf("expected <= 10 entries after eviction, got %d", len(cf.Entries))

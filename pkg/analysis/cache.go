@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	robotAnalysisDiskCacheVersion      = 1
+	robotAnalysisDiskCacheVersion      = 2
 	robotAnalysisDiskCacheFileName     = "analysis_cache.json"
 	robotAnalysisDiskCacheDirName      = "bv"
 	robotAnalysisDiskCacheMaxEntries   = 10
@@ -681,6 +681,270 @@ type graphStatsCacheBlob struct {
 	Slack             map[string]float64 `json:"slack"`
 	Cycles            [][]string         `json:"cycles"`
 	Status            MetricStatus       `json:"status"`
+}
+
+// graphStatsCacheSoA is the on-disk (serialized) form of graphStatsCacheBlob.
+//
+// Instead of ~10 separate map[string]T objects that each repeat every node-ID
+// string as a JSON key (~10×N repeated strings + per-map rehash on decode), it
+// uses a struct-of-arrays / dictionary-encoding layout: the node-ID strings are
+// stored exactly once in Nodes, and every per-node metric is a positional array
+// aligned to Nodes (index i → value for Nodes[i]).
+//
+// Nodes is the sorted union of the key sets of all per-node maps. Per-node
+// metrics are dense over this set in practice (PageRank/InDegree/... all cover
+// the whole graph), so each *Vals array is full length and a metric needs no
+// presence info in the common case. To remain exactly round-trippable for the
+// rare partial/nil map, each metric also carries:
+//   - a *Set bool: distinguishes a non-nil map (possibly empty) from a nil map,
+//     so toGraphStats() restores nil-ness exactly.
+//   - an optional *Idx []int32: when a non-nil map does NOT cover every node in
+//     Nodes, Idx lists the Nodes indices that ARE present and *Vals is aligned
+//     to Idx instead of Nodes. When Idx is nil the metric is dense (covers all
+//     of Nodes) and *Vals is aligned to Nodes directly. This keeps absent vs.
+//     present-zero distinct without a per-node presence string.
+//
+// This is purely the serialized shape: graphStatsCacheBlob and the in-memory
+// GraphStats it expands to are unchanged.
+type graphStatsCacheSoA struct {
+	Version int `json:"v"` // SoA payload version (matches robotAnalysisDiskCacheVersion intent)
+
+	Nodes []string `json:"nodes"`
+
+	TopologicalOrder []string       `json:"topological_order"`
+	Density          float64        `json:"density"`
+	NodeCount        int            `json:"node_count"`
+	EdgeCount        int            `json:"edge_count"`
+	Config           AnalysisConfig `json:"config"`
+	Articulation     []string       `json:"articulation"`
+	Cycles           [][]string     `json:"cycles"`
+	Status           MetricStatus   `json:"status"`
+
+	// Float metrics (positional, aligned to Nodes unless *Idx present).
+	PageRankSet bool      `json:"pr_set,omitempty"`
+	PageRankIdx []int32   `json:"pr_idx,omitempty"`
+	PageRank    []float64 `json:"pr,omitempty"`
+
+	BetweennessSet bool      `json:"bt_set,omitempty"`
+	BetweennessIdx []int32   `json:"bt_idx,omitempty"`
+	Betweenness    []float64 `json:"bt,omitempty"`
+
+	EigenvectorSet bool      `json:"ev_set,omitempty"`
+	EigenvectorIdx []int32   `json:"ev_idx,omitempty"`
+	Eigenvector    []float64 `json:"ev,omitempty"`
+
+	HubsSet bool      `json:"hub_set,omitempty"`
+	HubsIdx []int32   `json:"hub_idx,omitempty"`
+	Hubs    []float64 `json:"hub,omitempty"`
+
+	AuthoritiesSet bool      `json:"auth_set,omitempty"`
+	AuthoritiesIdx []int32   `json:"auth_idx,omitempty"`
+	Authorities    []float64 `json:"auth,omitempty"`
+
+	CriticalPathScoreSet bool      `json:"cp_set,omitempty"`
+	CriticalPathScoreIdx []int32   `json:"cp_idx,omitempty"`
+	CriticalPathScore    []float64 `json:"cp,omitempty"`
+
+	SlackSet bool      `json:"sl_set,omitempty"`
+	SlackIdx []int32   `json:"sl_idx,omitempty"`
+	Slack    []float64 `json:"sl,omitempty"`
+
+	// Int metrics (positional, aligned to Nodes unless *Idx present).
+	OutDegreeSet bool    `json:"od_set,omitempty"`
+	OutDegreeIdx []int32 `json:"od_idx,omitempty"`
+	OutDegree    []int   `json:"od,omitempty"`
+
+	InDegreeSet bool    `json:"id_set,omitempty"`
+	InDegreeIdx []int32 `json:"id_idx,omitempty"`
+	InDegree    []int   `json:"id,omitempty"`
+
+	CoreNumberSet bool    `json:"kc_set,omitempty"`
+	CoreNumberIdx []int32 `json:"kc_idx,omitempty"`
+	CoreNumber    []int   `json:"kc,omitempty"`
+}
+
+// MarshalJSON flattens the string-keyed maps into the compact SoA layout.
+func (b graphStatsCacheBlob) MarshalJSON() ([]byte, error) {
+	// Build the shared node index: sorted union of every per-node map's keys.
+	nodeSet := make(map[string]struct{})
+	addFloatKeys := func(m map[string]float64) {
+		for k := range m {
+			nodeSet[k] = struct{}{}
+		}
+	}
+	addIntKeys := func(m map[string]int) {
+		for k := range m {
+			nodeSet[k] = struct{}{}
+		}
+	}
+	addFloatKeys(b.PageRank)
+	addFloatKeys(b.Betweenness)
+	addFloatKeys(b.Eigenvector)
+	addFloatKeys(b.Hubs)
+	addFloatKeys(b.Authorities)
+	addFloatKeys(b.CriticalPathScore)
+	addFloatKeys(b.Slack)
+	addIntKeys(b.OutDegree)
+	addIntKeys(b.InDegree)
+	addIntKeys(b.CoreNumber)
+
+	nodes := make([]string, 0, len(nodeSet))
+	for k := range nodeSet {
+		nodes = append(nodes, k)
+	}
+	sort.Strings(nodes)
+
+	soa := graphStatsCacheSoA{
+		Version:          robotAnalysisDiskCacheVersion,
+		Nodes:            nodes,
+		TopologicalOrder: b.TopologicalOrder,
+		Density:          b.Density,
+		NodeCount:        b.NodeCount,
+		EdgeCount:        b.EdgeCount,
+		Config:           b.Config,
+		Articulation:     b.Articulation,
+		Cycles:           b.Cycles,
+		Status:           b.Status,
+	}
+
+	soa.PageRankSet, soa.PageRankIdx, soa.PageRank = flattenFloat(b.PageRank, nodes)
+	soa.BetweennessSet, soa.BetweennessIdx, soa.Betweenness = flattenFloat(b.Betweenness, nodes)
+	soa.EigenvectorSet, soa.EigenvectorIdx, soa.Eigenvector = flattenFloat(b.Eigenvector, nodes)
+	soa.HubsSet, soa.HubsIdx, soa.Hubs = flattenFloat(b.Hubs, nodes)
+	soa.AuthoritiesSet, soa.AuthoritiesIdx, soa.Authorities = flattenFloat(b.Authorities, nodes)
+	soa.CriticalPathScoreSet, soa.CriticalPathScoreIdx, soa.CriticalPathScore = flattenFloat(b.CriticalPathScore, nodes)
+	soa.SlackSet, soa.SlackIdx, soa.Slack = flattenFloat(b.Slack, nodes)
+
+	soa.OutDegreeSet, soa.OutDegreeIdx, soa.OutDegree = flattenInt(b.OutDegree, nodes)
+	soa.InDegreeSet, soa.InDegreeIdx, soa.InDegree = flattenInt(b.InDegree, nodes)
+	soa.CoreNumberSet, soa.CoreNumberIdx, soa.CoreNumber = flattenInt(b.CoreNumber, nodes)
+
+	return json.Marshal(soa)
+}
+
+// UnmarshalJSON expands the compact SoA layout back into the string-keyed maps.
+func (b *graphStatsCacheBlob) UnmarshalJSON(data []byte) error {
+	var soa graphStatsCacheSoA
+	if err := json.Unmarshal(data, &soa); err != nil {
+		return err
+	}
+
+	b.TopologicalOrder = soa.TopologicalOrder
+	b.Density = soa.Density
+	b.NodeCount = soa.NodeCount
+	b.EdgeCount = soa.EdgeCount
+	b.Config = soa.Config
+	b.Articulation = soa.Articulation
+	b.Cycles = soa.Cycles
+	b.Status = soa.Status
+
+	b.PageRank = expandFloat(soa.PageRankSet, soa.PageRankIdx, soa.PageRank, soa.Nodes)
+	b.Betweenness = expandFloat(soa.BetweennessSet, soa.BetweennessIdx, soa.Betweenness, soa.Nodes)
+	b.Eigenvector = expandFloat(soa.EigenvectorSet, soa.EigenvectorIdx, soa.Eigenvector, soa.Nodes)
+	b.Hubs = expandFloat(soa.HubsSet, soa.HubsIdx, soa.Hubs, soa.Nodes)
+	b.Authorities = expandFloat(soa.AuthoritiesSet, soa.AuthoritiesIdx, soa.Authorities, soa.Nodes)
+	b.CriticalPathScore = expandFloat(soa.CriticalPathScoreSet, soa.CriticalPathScoreIdx, soa.CriticalPathScore, soa.Nodes)
+	b.Slack = expandFloat(soa.SlackSet, soa.SlackIdx, soa.Slack, soa.Nodes)
+
+	b.OutDegree = expandInt(soa.OutDegreeSet, soa.OutDegreeIdx, soa.OutDegree, soa.Nodes)
+	b.InDegree = expandInt(soa.InDegreeSet, soa.InDegreeIdx, soa.InDegree, soa.Nodes)
+	b.CoreNumber = expandInt(soa.CoreNumberSet, soa.CoreNumberIdx, soa.CoreNumber, soa.Nodes)
+
+	return nil
+}
+
+// flattenFloat columnarizes a string-keyed float map against the shared Nodes
+// index. Returns (set, idx, vals): set=false ⇒ nil map; idx=nil ⇒ vals is dense
+// over Nodes; idx non-nil ⇒ vals[i] is the value for Nodes[idx[i]].
+func flattenFloat(m map[string]float64, nodes []string) (bool, []int32, []float64) {
+	if m == nil {
+		return false, nil, nil
+	}
+	if len(m) == len(nodes) {
+		// Dense: every node in the shared index has a value (the union is built
+		// from these maps' keys, so equal length ⇒ identical key set).
+		vals := make([]float64, len(nodes))
+		for i, n := range nodes {
+			vals[i] = m[n]
+		}
+		return true, nil, vals
+	}
+	// Sparse: emit (index, value) pairs in Nodes order for determinism.
+	idx := make([]int32, 0, len(m))
+	vals := make([]float64, 0, len(m))
+	for i, n := range nodes {
+		if v, ok := m[n]; ok {
+			idx = append(idx, int32(i))
+			vals = append(vals, v)
+		}
+	}
+	return true, idx, vals
+}
+
+func flattenInt(m map[string]int, nodes []string) (bool, []int32, []int) {
+	if m == nil {
+		return false, nil, nil
+	}
+	if len(m) == len(nodes) {
+		vals := make([]int, len(nodes))
+		for i, n := range nodes {
+			vals[i] = m[n]
+		}
+		return true, nil, vals
+	}
+	idx := make([]int32, 0, len(m))
+	vals := make([]int, 0, len(m))
+	for i, n := range nodes {
+		if v, ok := m[n]; ok {
+			idx = append(idx, int32(i))
+			vals = append(vals, v)
+		}
+	}
+	return true, idx, vals
+}
+
+func expandFloat(set bool, idx []int32, vals []float64, nodes []string) map[string]float64 {
+	if !set {
+		return nil
+	}
+	if idx == nil {
+		m := make(map[string]float64, len(vals))
+		for i := range vals {
+			if i < len(nodes) {
+				m[nodes[i]] = vals[i]
+			}
+		}
+		return m
+	}
+	m := make(map[string]float64, len(idx))
+	for i, ni := range idx {
+		if int(ni) < len(nodes) && i < len(vals) {
+			m[nodes[ni]] = vals[i]
+		}
+	}
+	return m
+}
+
+func expandInt(set bool, idx []int32, vals []int, nodes []string) map[string]int {
+	if !set {
+		return nil
+	}
+	if idx == nil {
+		m := make(map[string]int, len(vals))
+		for i := range vals {
+			if i < len(nodes) {
+				m[nodes[i]] = vals[i]
+			}
+		}
+		return m
+	}
+	m := make(map[string]int, len(idx))
+	for i, ni := range idx {
+		if int(ni) < len(nodes) && i < len(vals) {
+			m[nodes[ni]] = vals[i]
+		}
+	}
+	return m
 }
 
 func (b graphStatsCacheBlob) toGraphStats() *GraphStats {
