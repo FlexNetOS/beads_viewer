@@ -181,3 +181,20 @@ snapshot blob reads for the event extraction (pass-13 cache covers only commits
 already seen) and the cheap report re-assembly; HEAD `rev-parse`, the snapshot
 `git log --raw --follow` enumeration, and `git cat-file` for the new commits' blobs
 remain. Co-commit git work is no longer on the hot path for already-seen commits.
+
+## FINAL matrix after pass 14 (co-commit incremental) — orig 0ef0e25 vs final
+Isolated caches, median-of-3, this host. All goldens byte-identical (date-stable normalizer).
+
+| Scenario (what the agent does)                  | orig  | final  | speedup |
+|------------------------------------------------|-------|--------|---------|
+| warm repeat (re-run, nothing changed)          | 2.30s | 0.09s  | ~25x    |
+| edit a bead then triage (`br update`)          | 2.26s | ~0.15s | ~15x    | (pass 11)
+| new commit then triage (HEAD advanced)         | 2.26s | ~0.19s | ~12x    | (pass 13 events + pass 14 co-commit; co-commit git-log 2->0)
+| cold first-ever (empty cache, once per machine)| 2.26s | 1.01s  | 2.2x    |
+
+Pass 14: per-commit co-commit cache (per_commit_cocommit_cache.go) keyed on commit SHA
+namespaced by exclude-pathspec hash; primeBatch git-fetches only uncached SHAs.
+Differential test byte-identical (fetch count == uncached count); -race clean.
+Residual on new-commit path: snapshot `git log --raw --follow` enumeration over full
+history + new commits' blob reads + report reassembly. Truly-cold one-time extraction (~1.0s)
+is irreducible without making correlation lazy (declined: changes output semantics).
