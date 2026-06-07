@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/xfetch"
@@ -831,13 +832,12 @@ func readRobotDiskCacheLocked(f *os.File) robotAnalysisDiskCacheFile {
 	if _, err := f.Seek(0, 0); err != nil {
 		return robotAnalysisDiskCacheFile{Version: robotAnalysisDiskCacheVersion, Entries: map[string]robotAnalysisDiskCacheEntry{}}
 	}
-	data, err := io.ReadAll(f)
-	if err != nil || len(data) == 0 {
-		return robotAnalysisDiskCacheFile{Version: robotAnalysisDiskCacheVersion, Entries: map[string]robotAnalysisDiskCacheEntry{}}
-	}
 
+	// Stream-decode directly from the file via goccy/go-json's buffered decoder,
+	// avoiding a full ReadAll + Unmarshal of the (potentially multi-MB) cache.
+	// This is the hot read path: it runs on EVERY `bv --robot-*` invocation.
 	var cf robotAnalysisDiskCacheFile
-	if err := json.Unmarshal(data, &cf); err != nil || cf.Version != robotAnalysisDiskCacheVersion {
+	if err := json.NewDecoder(f).Decode(&cf); err != nil || cf.Version != robotAnalysisDiskCacheVersion {
 		return robotAnalysisDiskCacheFile{Version: robotAnalysisDiskCacheVersion, Entries: map[string]robotAnalysisDiskCacheEntry{}}
 	}
 	if cf.Entries == nil {
@@ -856,9 +856,10 @@ func writeRobotDiskCacheLocked(f *os.File, cf robotAnalysisDiskCacheFile) error 
 	if _, err := f.Seek(0, 0); err != nil {
 		return err
 	}
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(cf); err != nil {
+	// Compact (no SetIndent): this cache is never read by humans, so compact
+	// JSON is smaller on disk and faster to encode/decode. goccy/go-json's
+	// streaming encoder writes directly to the file.
+	if err := json.NewEncoder(f).Encode(cf); err != nil {
 		return err
 	}
 	return f.Sync()
