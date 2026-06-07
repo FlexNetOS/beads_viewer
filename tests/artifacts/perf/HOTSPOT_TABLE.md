@@ -113,3 +113,19 @@ Pass 10 contributes a *future-proofing* lever, not a number here.)
   `[]Issue` + order + count + stats + ordered warnings on the real file and on
   corrupt/BOM/CRLF/no-trailing-newline fixtures; all 4 goldens OK; `go vet` / `gofmt` /
   `ubs` clean.
+
+## Authoritative final A/B (true original rebuilt from pre-loop commit 0ef0e25 vs final)
+Isolated XDG_CACHE_HOME per run, median of 3, this host. Full `go test ./...` green (e2e incl).
+git execs for triage: 340 -> 3 (warm).
+
+| Command | Cold orig | Cold final | Warm orig | Warm final | Warm speedup |
+|---|---|---|---|---|---|
+| robot-triage   | 2.20s | 0.98s | 2.24s | 0.09s | ~25x |
+| robot-next     | 2.20s | 0.98s | 2.22s | 0.08s | ~28x |
+| robot-plan     | 0.13s | 0.07s | 0.14s | 0.06s | ~2.3x |
+| robot-insights | 0.66s | 0.26s | 0.63s | 0.19s | ~3.3x |
+
+Warm = repeat call (the agent-loop case): dominated for triage/next by the new correlation
+result cache (pass 4); orig has no such cache so it re-runs the full git extraction every call.
+Cold = first call after a change: correlation extraction still runs once but via batched/snapshot
+git (passes 2-3) instead of 336 per-commit subprocesses.
