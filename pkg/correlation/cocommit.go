@@ -10,10 +10,20 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // renamePattern matches git's brace notation for renames: {old => new}
 var renamePattern = regexp.MustCompile(`\{[^}]* => ([^}]*)\}`)
+
+// coCommitFetchedSHAsCounter counts the number of commit SHAs that primeBatch
+// actually fetched from git (via the batched `git log` passes) across the
+// process — i.e. SHAs that missed BOTH the in-memory and the persistent
+// per-commit co-commit cache. It exists solely so tests can prove the incremental
+// cache fetches only the NEW commits' co-commit data (and 0 when nothing is new).
+// It is never read on any production path.
+var coCommitFetchedSHAsCounter int64
 
 // CoCommitExtractor extracts files that were changed in the same commit as bead changes
 type CoCommitExtractor struct {
@@ -193,21 +203,60 @@ func (c *CoCommitExtractor) primeBatch(shas []string) {
 		return
 	}
 
-	files := c.batchFilesChanged(want)
-	stats := c.batchLineStats(want)
-	for _, sha := range want {
+	// Persistent layer: a commit's (files, lineStats) is a pure function of
+	// (SHA, exclude-pathspec set) — see per_commit_cocommit_cache.go. Serve
+	// SHAs already on disk straight into the in-memory maps and run the batched
+	// `git log` ONLY for SHAs missing from both memory and disk. A disk hit
+	// populates fileCache/statCache identically to the git path: Files in git
+	// (name-status) order, LineStats reconstructed exactly via fromLineStatsMap,
+	// and an empty diff memoized as nil files + empty stat map. So the in-memory
+	// maps are byte-identical regardless of how many SHAs came from disk.
+	namespace := perCommitCoCommitCacheNamespace()
+	disk := loadPerCommitCoCommit(namespace)
+
+	missing := want
+	if disk != nil {
+		missing = make([]string, 0, len(want))
+		for _, sha := range want {
+			if e, ok := disk[sha]; ok {
+				c.fileCache[sha] = e.Files
+				c.statCache[sha] = fromLineStatsMap(e.LineStats)
+				continue
+			}
+			missing = append(missing, sha)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	atomic.AddInt64(&coCommitFetchedSHAsCounter, int64(len(missing)))
+
+	files := c.batchFilesChanged(missing)
+	stats := c.batchLineStats(missing)
+	fresh := make(map[string]perCommitCoCommitEntry, len(missing))
+	now := time.Now().UTC()
+	for _, sha := range missing {
 		// files/stats maps only carry SHAs that appeared in the stream (i.e.
 		// produced a non-empty diff under the exclude pathspecs). Absent SHAs
 		// memoize as empty so future lookups hit the cache rather than re-forking
 		// git — matching the legacy per-commit path, where an empty diff yields an
 		// empty file list and the SHA contributes no correlated commit.
 		c.fileCache[sha] = files[sha]
-		if s, ok := stats[sha]; ok {
-			c.statCache[sha] = s
-		} else {
-			c.statCache[sha] = map[string]lineStats{}
+		s, ok := stats[sha]
+		if !ok {
+			s = map[string]lineStats{}
+		}
+		c.statCache[sha] = s
+		fresh[sha] = perCommitCoCommitEntry{
+			CreatedAt: now,
+			Files:     files[sha],
+			LineStats: toLineStatsMap(s),
 		}
 	}
+	// Persist only the freshly fetched SHAs (no-rewrite-on-pure-hit: when every
+	// requested SHA was already on disk, missing is empty and we returned above).
+	storePerCommitCoCommit(namespace, fresh)
 }
 
 // batchLogArgs builds `git log --no-walk=unsorted <diffFlag> --format=<header>
