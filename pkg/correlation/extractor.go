@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -420,8 +421,20 @@ func (e *Extractor) parseDiff(diffData []byte, info commitInfo, filterBeadID str
 		}
 	}
 
-	// Generate events by comparing old and new states
+	// Generate events by comparing old and new states. Iterate the affected bead
+	// IDs in a deterministic (sorted) order rather than Go's randomized map order:
+	// the within-commit event order is then stable across runs, which (a) makes
+	// the per-commit event cache's replayed order byte-identical to a fresh full
+	// extraction (the incremental path's correctness contract), and (b) removes a
+	// latent run-to-run non-determinism in the emitted event sequence. Downstream
+	// consumers group events by bead ID and timestamps are equal within a commit,
+	// so this does not change any report/golden output — it only fixes the order.
+	sortedBeadIDs := make([]string, 0, len(seenBeads))
 	for beadID := range seenBeads {
+		sortedBeadIDs = append(sortedBeadIDs, beadID)
+	}
+	sort.Strings(sortedBeadIDs)
+	for _, beadID := range sortedBeadIDs {
 		oldSnap, hadOld := oldBeads[beadID]
 		newSnap, hasNew := newBeads[beadID]
 

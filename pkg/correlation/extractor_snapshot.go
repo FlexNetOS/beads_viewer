@@ -8,8 +8,15 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// blobsReadCounter counts the total number of blob object ids passed to
+// readBlobs across the process. It exists solely so tests can prove the
+// incremental per-commit cache reads only the NEW commits' blobs (and ~0 when
+// nothing is new). It is never read on any production path.
+var blobsReadCounter int64
 
 // nullBlobSHA is git's all-zero object id, used in `--raw` diff lines for the
 // side of a change where the blob does not exist (a pure addition has an all-zero
@@ -70,10 +77,22 @@ func (e *Extractor) extractViaSnapshots(opts ExtractOptions) ([]BeadEvent, error
 		return nil, nil
 	}
 
-	// Collect the unique blob object ids referenced across all commits. Adjacent
-	// commits in the followed history share a boundary blob (commit C's new blob
-	// is commit C's child's old blob), so the 2xN referenced ids collapse to ~N
-	// unique reads.
+	// INCREMENTAL per-commit cache: each commit's events are an immutable pure
+	// function of its (oldSHA,newSHA) blob pair + commit metadata + BeadID filter
+	// (see per_commit_event_cache.go). Load the cached contributions for this
+	// (file,BeadID) namespace; reuse them for already-seen commits so a HEAD
+	// advance only reads + diffs the NEW commits' blobs instead of all ~200.
+	namespace := perCommitEventCacheNamespace(e.primaryBeadsFile(), opts.BeadID)
+	cached := loadPerCommitEvents(namespace)
+
+	// Per-commit events in git-log (newest-first) order; nil means "must compute".
+	perCommitEvents := make([][]BeadEvent, len(commits))
+	fresh := make(map[string]perCommitEventEntry)
+
+	// Collect the unique blob object ids referenced ONLY by the uncached commits.
+	// Adjacent uncached commits in the followed history can still share a boundary
+	// blob, so this dedups too. Cached commits contribute zero blob reads — the
+	// 232MB cat-file is skipped entirely when nothing is new.
 	seen := make(map[string]struct{}, len(commits)+1)
 	unique := make([]string, 0, len(commits)+1)
 	addSHA := func(s string) {
@@ -87,8 +106,16 @@ func (e *Extractor) extractViaSnapshots(opts ExtractOptions) ([]BeadEvent, error
 		unique = append(unique, s)
 	}
 	for i := range commits {
-		addSHA(commits[i].oldSHA)
-		addSHA(commits[i].newSHA)
+		c := commits[i]
+		// A cache hit is valid only if the stored blob pair still matches the
+		// followed file's parent/child OIDs for this commit (re-validation guards
+		// against any rename-following anomaly; in practice always matches).
+		if ce, ok := cached[c.info.SHA]; ok && ce.OldSHA == c.oldSHA && ce.NewSHA == c.newSHA {
+			perCommitEvents[i] = ce.Events
+			continue
+		}
+		addSHA(c.oldSHA)
+		addSHA(c.newSHA)
 	}
 
 	blobs, err := e.readBlobs(unique)
@@ -96,24 +123,52 @@ func (e *Extractor) extractViaSnapshots(opts ExtractOptions) ([]BeadEvent, error
 		return nil, err
 	}
 
-	// Hash each unique blob's record lines exactly once.
+	// Hash each (uncached-referenced) unique blob's record lines exactly once.
 	sets := make(map[string]recordLineSet, len(blobs))
 	for sha, content := range blobs {
 		sets[sha] = newRecordLineSet(content)
 	}
 
-	var events []BeadEvent
+	// Compute the uncached commits' contributions and record them for caching.
 	for i := range commits {
+		if perCommitEvents[i] != nil {
+			continue // served from cache
+		}
 		c := commits[i]
 		newSet := sets[c.newSHA]
 		var oldSet recordLineSet
 		if c.oldSHA != "" {
 			oldSet = sets[c.oldSHA]
 		}
+		var evs []BeadEvent
 		diffText := synthesizeRecordDiff(oldSet, newSet)
 		if len(diffText) > 0 {
-			events = append(events, e.parseDiff(diffText, c.info, opts.BeadID)...)
+			evs = e.parseDiff(diffText, c.info, opts.BeadID)
 		}
+		// Store an empty-but-non-nil slice so the compose loop and the cache both
+		// treat "computed, no events" as a definitive result (never re-read).
+		if evs == nil {
+			evs = []BeadEvent{}
+		}
+		perCommitEvents[i] = evs
+		fresh[c.info.SHA] = perCommitEventEntry{
+			CreatedAt: time.Now().UTC(),
+			OldSHA:    c.oldSHA,
+			NewSHA:    c.newSHA,
+			Events:    evs,
+		}
+	}
+
+	// Persist only the freshly computed commits (pure hits are never re-written,
+	// preserving the no-rewrite-on-pure-hit discipline when nothing is new).
+	storePerCommitEvents(namespace, fresh)
+
+	// Compose the full event slice in the SAME ORDER a full extraction produces:
+	// concatenate per-commit events in git-log (newest-first) order, exactly as
+	// the original single loop did, then reverse to chronological.
+	var events []BeadEvent
+	for i := range commits {
+		events = append(events, perCommitEvents[i]...)
 	}
 
 	// snapshotCommits returns newest-first (git log order); match the legacy
@@ -260,6 +315,7 @@ func parseRawDiffLines(payload []byte, sc *snapshotCommit) bool {
 // by the caller).
 func (e *Extractor) readBlobs(ids []string) (map[string][]byte, error) {
 	result := make(map[string][]byte, len(ids))
+	atomic.AddInt64(&blobsReadCounter, int64(len(ids)))
 	if len(ids) == 0 {
 		return result, nil
 	}
