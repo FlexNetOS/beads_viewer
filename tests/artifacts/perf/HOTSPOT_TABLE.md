@@ -129,3 +129,17 @@ Warm = repeat call (the agent-loop case): dominated for triage/next by the new c
 result cache (pass 4); orig has no such cache so it re-runs the full git extraction every call.
 Cold = first call after a change: correlation extraction still runs once but via batched/snapshot
 git (passes 2-3) instead of 336 per-commit subprocesses.
+
+## Cold-path extension (passes 11-13) — final scenario matrix
+True original (0ef0e25) vs final, isolated caches, this host. All outputs byte-identical (goldens OK).
+
+| Scenario (what the agent does) | orig | final | speedup |
+|---|---|---|---|
+| **warm repeat** (re-run triage, nothing changed) | 2.26s | **0.10s** | ~23x |
+| **edit a bead** then triage (`br update`; HEAD unchanged) | 2.26s | **0.15s** | ~15x  (pass 11: HEAD-only artifact cache) |
+| **new commit** then triage (HEAD advanced) | 2.26s | **0.40s** | ~5.6x (pass 13: per-commit incremental extract) |
+| **cold first-ever** (empty cache, one-time per machine) | 2.25s | **1.01s** | 2.2x  (passes 2-3: batched/snapshot git) |
+
+orig has no correlation caching, so every repeat scenario stays ~2.26s.
+Residual on the new-commit path (~0.40s) is co-commit `primeBatch` (still scans all commit
+SHAs); it is per-commit-immutable and the clear next target (same content-addressed pattern).
