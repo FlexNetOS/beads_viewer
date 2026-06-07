@@ -20,8 +20,12 @@ norm() {
     -e 's/"compute_time_ms":[0-9.]+,//g' \
     -e 's/"ms":[0-9.]+,//g' \
     -e 's/"[a-zA-Z_]*_ms":[0-9.]+,//g' \
-    -e 's/([0-9]+\.[0-9]{4})[0-9]+/\1/g'
+    -e 's/([0-9]+\.[0-9]{4})[0-9]+/\1/g' \
+    -e 's/[0-9]+ (days?)/N \1/g' \
+    -e 's/"([a-z_]*_days)":[0-9]+/"\1":0/g'
 }
+# day-count fields (staleness "N days", *_days) are time-relative and drift daily
+# regardless of code; normalized so goldens stay stable across calendar days.
 
 echo "== build =="
 go build -o /tmp/bv_cand ./cmd/bv || { echo "BUILD FAILED"; exit 2; }
