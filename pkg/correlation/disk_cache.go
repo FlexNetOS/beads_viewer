@@ -247,12 +247,31 @@ func putCorrelationDiskCachedReport(headSHA, beadsHash, optsHash string, report 
 	_ = writeCorrelationDiskCacheLocked(f, cf)
 }
 
-// GenerateReportCached wraps Correlator.GenerateReport with the persistent disk
-// cache. On a hit (HEAD + bead ID/Title/Status + options unchanged) it returns
-// the deserialized report with NO extraction git subprocesses. On a miss it
-// computes the report normally and persists it. When the cache is disabled
-// (non-robot mode, BV_NO_CACHE=1) or the cache key cannot be built, it falls
-// straight through to GenerateReport, preserving existing behavior exactly.
+// GenerateReportCached wraps Correlator.GenerateReport with a two-layer
+// persistent disk cache, both keyed off the repository HEAD:
+//
+//  1. OUTER report cache (this file), keyed on HEAD + hashBeads + options.
+//     A hit means NOTHING relevant changed; the fully assembled report is
+//     returned with no git extraction and no report re-assembly.
+//
+//  2. INNER HEAD-artifact cache (head_artifact_cache.go), keyed on HEAD +
+//     options ONLY (no hashBeads). When the outer cache misses *because beads
+//     changed* but HEAD is unchanged (the `br update X; bv --robot-triage`
+//     loop), the cached history artifact — the expensive, purely-history-
+//     derived []BeadEvent + co-commit data — is loaded cheaply and the report
+//     is re-assembled against the *current* beads via assembleReport, skipping
+//     the 232MB git-blob extraction entirely. The freshly assembled report is
+//     then written back to the outer cache for the new bead-hash.
+//
+// On a full miss (HEAD changed, or cold) it extracts once, persists BOTH the
+// artifact and the report, and returns. The assembled report is byte-identical
+// (modulo the always-fresh GeneratedAt timestamp, as with the pre-existing
+// outer cache) whether served fresh, from the outer cache, or rebuilt from the
+// artifact, because assembleReport is a pure function of (beads, opts, artifact)
+// and the artifact is reproduced exactly from the same HEAD+options.
+//
+// When the cache is disabled (non-robot mode, BV_NO_CACHE=1) or the HEAD cannot
+// be resolved, it falls straight through to GenerateReport unchanged.
 func (c *Correlator) GenerateReportCached(beads []BeadInfo, opts CorrelatorOptions) (*HistoryReport, error) {
 	if !correlationDiskCacheEnabled() {
 		return c.GenerateReport(beads, opts)
@@ -266,14 +285,27 @@ func (c *Correlator) GenerateReportCached(beads []BeadInfo, opts CorrelatorOptio
 	beadsHash := hashBeads(beads)
 	optsHash := hashOptions(opts)
 
+	// Layer 1: fully assembled report for this exact (HEAD, beads, opts).
 	if report, ok := getCorrelationDiskCachedReport(headSHA, beadsHash, optsHash); ok {
 		return report, nil
 	}
 
-	report, err := c.GenerateReport(beads, opts)
+	// Layer 2: HEAD-only artifact. A hit here means the expensive extraction is
+	// reusable; only the cheap bead-dependent assembly must run.
+	if art, ok := getHeadArtifactCached(headSHA, optsHash); ok {
+		report := c.assembleReport(beads, opts, art)
+		putCorrelationDiskCachedReport(headSHA, beadsHash, optsHash, report)
+		return report, nil
+	}
+
+	// Full miss: extract once, then assemble. Persist both layers.
+	art, err := c.extractHistoryArtifact(opts)
 	if err != nil {
 		return nil, err
 	}
+	putHeadArtifactCached(headSHA, optsHash, art)
+
+	report := c.assembleReport(beads, opts, art)
 	putCorrelationDiskCachedReport(headSHA, beadsHash, optsHash, report)
 	return report, nil
 }
