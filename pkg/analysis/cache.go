@@ -561,11 +561,14 @@ func NewCachedAnalyzer(issues []model.Issue, cache *Cache) *CachedAnalyzer {
 	if cache == nil {
 		cache = globalCache
 	}
+	analyzer := NewAnalyzer(issues)
 	return &CachedAnalyzer{
-		Analyzer:   NewAnalyzer(issues),
-		cache:      cache,
-		issues:     issues,
-		dataHash:   ComputeDataHash(issues),
+		Analyzer: analyzer,
+		cache:    cache,
+		issues:   issues,
+		// Reuse the analyzer's memoized data hash so the disk-cache key path
+		// (AnalyzeAsyncWithConfig) and this struct share one SHA256 computation.
+		dataHash:   analyzer.DataHash(),
 		configHash: "dynamic",
 	}
 }

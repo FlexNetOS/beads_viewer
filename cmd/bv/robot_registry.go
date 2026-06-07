@@ -37,23 +37,28 @@ type RobotCommand struct {
 }
 
 type RobotContext struct {
-	Issues               []model.Issue
-	DataHash             string
-	Encoder              robotEncoder
-	AsOf                 string
-	AsOfCommit           string
-	LabelScope           string
-	LabelContext         *analysis.LabelHealth
-	Stdout               io.Writer
-	Stderr               io.Writer
-	WorkDir              string
-	ProjectDir           string
-	BaselinePath         string
-	EnvRobot             bool
-	SearchOutput         *robotSearchOutput
-	Diff                 *analysis.SnapshotDiff
-	DiffHistoricalIssues []model.Issue
-	DiffResolvedRevision string
+	Issues   []model.Issue
+	DataHash string
+	// DataHashMatchesIssues is true when DataHash is the ComputeDataHash of the
+	// exact Issues slice carried here (i.e. no label-scope or recipe filtering
+	// changed Issues after DataHash was computed). When true, handlers may seed
+	// analyzers with DataHash to avoid recomputing the identical hash.
+	DataHashMatchesIssues bool
+	Encoder               robotEncoder
+	AsOf                  string
+	AsOfCommit            string
+	LabelScope            string
+	LabelContext          *analysis.LabelHealth
+	Stdout                io.Writer
+	Stderr                io.Writer
+	WorkDir               string
+	ProjectDir            string
+	BaselinePath          string
+	EnvRobot              bool
+	SearchOutput          *robotSearchOutput
+	Diff                  *analysis.SnapshotDiff
+	DiffHistoricalIssues  []model.Issue
+	DiffResolvedRevision  string
 }
 
 type RobotRegistry struct {
@@ -620,6 +625,9 @@ func registerPhaseTwoRobotHandlers(registry *RobotRegistry, cfg phaseTwoRobotHan
 		Description: "Output dependency-respecting execution plan",
 		Handler: func(ctx RobotContext) error {
 			analyzer := analysis.NewAnalyzer(ctx.Issues)
+			if ctx.DataHashMatchesIssues {
+				analyzer.SeedDataHash(ctx.DataHash)
+			}
 			config := analysis.ConfigForSize(len(ctx.Issues), countEdges(ctx.Issues))
 			if cfg.ForceFullAnalysis != nil && *cfg.ForceFullAnalysis {
 				config = analysis.FullAnalysisConfig()
@@ -686,6 +694,9 @@ func registerPhaseTwoRobotHandlers(registry *RobotRegistry, cfg phaseTwoRobotHan
 		Description: "Output enhanced priority recommendations",
 		Handler: func(ctx RobotContext) error {
 			analyzer := analysis.NewAnalyzer(ctx.Issues)
+			if ctx.DataHashMatchesIssues {
+				analyzer.SeedDataHash(ctx.DataHash)
+			}
 			config := analysis.ConfigForSize(len(ctx.Issues), countEdges(ctx.Issues))
 			if cfg.ForceFullAnalysis != nil && *cfg.ForceFullAnalysis {
 				config = analysis.FullAnalysisConfig()
@@ -1531,6 +1542,9 @@ func handleRobotLabelAttention(ctx RobotContext, cfg phaseThreeRobotHandlerConfi
 
 func handleRobotInsights(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) error {
 	analyzer := analysis.NewAnalyzer(ctx.Issues)
+	if ctx.DataHashMatchesIssues {
+		analyzer.SeedDataHash(ctx.DataHash)
+	}
 	if cfg.ForceFullAnalysis != nil && *cfg.ForceFullAnalysis {
 		fullConfig := analysis.FullAnalysisConfig()
 		analyzer.SetConfig(&fullConfig)
@@ -1735,6 +1749,10 @@ func handleRobotTriage(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) error
 	}
 
 	now := robotNow()
+	seedHash := ""
+	if ctx.DataHashMatchesIssues {
+		seedHash = ctx.DataHash
+	}
 	triage := analysis.ComputeTriageWithOptionsAndTime(ctx.Issues, analysis.TriageOptions{
 		GroupByTrack:  cfg.RobotTriageByTrackFlag != nil && *cfg.RobotTriageByTrackFlag,
 		GroupByLabel:  cfg.RobotTriageByLabelFlag != nil && *cfg.RobotTriageByLabelFlag,
@@ -1742,6 +1760,7 @@ func handleRobotTriage(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) error
 		UseFastConfig: true,
 		History:       historyReport,
 		RootIssueID:   rootIssueID,
+		SeedDataHash:  seedHash,
 	}, now)
 	stabilizeRobotTriageForPinnedClock(&triage)
 

@@ -2375,6 +2375,11 @@ func main() {
 
 		// Stable data hash for robot outputs (after repo filter but before recipes/TUI)
 		dataHash := analysis.ComputeDataHash(issues)
+		// dataHash corresponds to the current `issues` slice. Track whether later
+		// reassignments (label-scope subgraph, recipe filtering) change `issues`
+		// out from under it; when unchanged we can seed analyzers with dataHash to
+		// avoid recomputing the identical SHA256 for their disk-cache key.
+		dataHashMatchesIssues := true
 
 		// Label subgraph scoping (bv-122)
 		// When --label is specified, extract the label's subgraph and use it for all robot analysis.
@@ -2395,6 +2400,7 @@ func main() {
 					}
 				}
 				issues = subgraphIssues
+				dataHashMatchesIssues = false
 				// Compute label health for context
 				cfg := analysis.DefaultLabelHealthConfig()
 				allHealth := analysis.ComputeAllLabelHealth(issues, cfg, time.Now().UTC(), nil)
@@ -2413,9 +2419,11 @@ func main() {
 		if activeRecipe != nil && (*robotTriage || *robotNext || *robotTriageByTrack || *robotTriageByLabel || *robotPriority || *robotInsights || *robotPlan) {
 			issues = applyRecipeFilters(issues, activeRecipe)
 			issues = applyRecipeSort(issues, activeRecipe)
+			dataHashMatchesIssues = false
 		}
 		robotDispatchContext.Issues = issues
 		robotDispatchContext.DataHash = dataHash
+		robotDispatchContext.DataHashMatchesIssues = dataHashMatchesIssues
 		robotDispatchContext.AsOf = *asOf
 		robotDispatchContext.AsOfCommit = asOfResolved
 		robotDispatchContext.LabelScope = *labelScope
