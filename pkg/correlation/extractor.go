@@ -4,7 +4,6 @@ package correlation
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	json "github.com/goccy/go-json"
 )
 
 // ExtractOptions controls which commits and beads to extract events from
