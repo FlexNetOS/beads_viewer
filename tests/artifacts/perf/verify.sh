@@ -14,9 +14,12 @@ norm() {
   sed -E \
     -e 's/"generated_at":"[^"]*"/"generated_at":"X"/g' \
     -e 's/"computed_at":"[^"]*"/"computed_at":"X"/g' \
-    -e 's/"compute_time_ms":[0-9.]+/"compute_time_ms":0/g' \
-    -e 's/"ms":[0-9.]+/"ms":0/g' \
-    -e 's/"[a-zA-Z_]*_ms":[0-9.]+/"_ms":0/g' \
+    -e 's/,"compute_time_ms":[0-9.]+//g' \
+    -e 's/,"ms":[0-9.]+//g' \
+    -e 's/,"[a-zA-Z_]*_ms":[0-9.]+//g' \
+    -e 's/"compute_time_ms":[0-9.]+,//g' \
+    -e 's/"ms":[0-9.]+,//g' \
+    -e 's/"[a-zA-Z_]*_ms":[0-9.]+,//g' \
     -e 's/([0-9]+\.[0-9]{4})[0-9]+/\1/g'
 }
 
