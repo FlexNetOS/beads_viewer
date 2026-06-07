@@ -18,6 +18,13 @@ var renamePattern = regexp.MustCompile(`\{[^}]* => ([^}]*)\}`)
 // CoCommitExtractor extracts files that were changed in the same commit as bead changes
 type CoCommitExtractor struct {
 	repoPath string
+
+	// Memoized per-commit diff data, populated lazily by primeBatch. Once a SHA
+	// is present in batchedSHAs, getFilesChanged/getLineStats serve it from these
+	// maps instead of forking a per-commit `git show`. See #161 batch fan-out fix.
+	fileCache   map[string][]FileChange
+	statCache   map[string]map[string]lineStats
+	batchedSHAs map[string]struct{}
 }
 
 // NewCoCommitExtractor creates a new co-commit extractor
@@ -149,19 +156,141 @@ func excludePathspecArgs() []string {
 	return args
 }
 
-// getFilesChanged runs git show --name-status to get changed files
-func (c *CoCommitExtractor) getFilesChanged(sha string) ([]FileChange, error) {
-	gitArgs := append([]string{"show", "--name-status", "--format=", sha}, excludePathspecArgs()...)
-	cmd := exec.Command("git", gitArgs...)
-	cmd.Dir = c.repoPath
-
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git show --name-status failed: %w", err)
+// primeBatch fetches name-status and numstat for every requested SHA in two
+// batched `git log` invocations and memoizes the result, so subsequent
+// getFilesChanged/getLineStats calls for those SHAs are served from memory
+// instead of forking one `git show` per commit. SHAs already batched are
+// skipped, keeping the call idempotent.
+//
+// We use `git log --no-walk=unsorted <SHAs>` rather than N×`git show`: a single
+// process streams each commit's first-parent diff (exactly what `git show`
+// computes) for the whole set. Two passes are required because git's
+// --name-status and --numstat are mutually exclusive in one invocation (the last
+// flag wins); the status letters live in one pass and the +/- line counts in the
+// other, matching the two existing parsers byte-for-byte. The same exclude
+// pathspecs are applied, so a commit whose diff is empty under the pathspec is
+// omitted from the stream — identical to `git show` printing nothing (verified)
+// and yielding an empty file list for that SHA.
+func (c *CoCommitExtractor) primeBatch(shas []string) {
+	if c.fileCache == nil {
+		c.fileCache = make(map[string][]FileChange)
+		c.statCache = make(map[string]map[string]lineStats)
+		c.batchedSHAs = make(map[string]struct{})
 	}
 
+	want := make([]string, 0, len(shas))
+	for _, sha := range shas {
+		if sha == "" {
+			continue
+		}
+		if _, done := c.batchedSHAs[sha]; done {
+			continue
+		}
+		c.batchedSHAs[sha] = struct{}{}
+		want = append(want, sha)
+	}
+	if len(want) == 0 {
+		return
+	}
+
+	files := c.batchFilesChanged(want)
+	stats := c.batchLineStats(want)
+	for _, sha := range want {
+		// files/stats maps only carry SHAs that appeared in the stream (i.e.
+		// produced a non-empty diff under the exclude pathspecs). Absent SHAs
+		// memoize as empty so future lookups hit the cache rather than re-forking
+		// git — matching the legacy per-commit path, where an empty diff yields an
+		// empty file list and the SHA contributes no correlated commit.
+		c.fileCache[sha] = files[sha]
+		if s, ok := stats[sha]; ok {
+			c.statCache[sha] = s
+		} else {
+			c.statCache[sha] = map[string]lineStats{}
+		}
+	}
+}
+
+// batchLogArgs builds `git log --no-walk=unsorted <diffFlag> --format=<header>
+// <SHAs> -- <exclude pathspecs>`, reusing the streaming-log header and exclude
+// helpers shared with the snapshot extractor.
+func batchLogArgs(diffFlag string, shas []string) []string {
+	args := make([]string, 0, len(shas)+8)
+	args = append(args, "log", "--no-walk=unsorted", diffFlag, "--format="+gitLogHeaderFormat)
+	args = append(args, shas...)
+	args = append(args, excludePathspecArgs()...)
+	return args
+}
+
+// batchFilesChanged runs one `git log --name-status` over all SHAs and returns
+// per-SHA FileChange lists using the same parsing as getFilesChanged.
+func (c *CoCommitExtractor) batchFilesChanged(shas []string) map[string][]FileChange {
+	files := make(map[string][]FileChange, len(shas))
+
+	cmd := exec.Command("git", withNoColorGit(batchLogArgs("--name-status", shas))...)
+	cmd.Dir = c.repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return files
+	}
+
+	c.forEachCommitChunk(out, func(sha string, payload []byte) {
+		files[sha] = parseNameStatus(payload)
+	})
+	return files
+}
+
+// batchLineStats runs one `git log --numstat` over all SHAs and returns per-SHA
+// line-stat maps using the same parsing as getLineStats.
+func (c *CoCommitExtractor) batchLineStats(shas []string) map[string]map[string]lineStats {
+	stats := make(map[string]map[string]lineStats, len(shas))
+
+	cmd := exec.Command("git", withNoColorGit(batchLogArgs("--numstat", shas))...)
+	cmd.Dir = c.repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return stats
+	}
+
+	c.forEachCommitChunk(out, func(sha string, payload []byte) {
+		stats[sha] = parseNumstat(payload)
+	})
+	return stats
+}
+
+// forEachCommitChunk splits a `git log --format=<header>` stream into per-commit
+// chunks (the same boundary detection parseSnapshotLog uses) and invokes fn with
+// the commit SHA and the diff payload that follows its header line.
+func (c *CoCommitExtractor) forEachCommitChunk(out []byte, fn func(sha string, payload []byte)) {
+	locs := commitPattern.FindAllIndex(out, -1)
+	for i, loc := range locs {
+		start := loc[0]
+		end := len(out)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		chunk := out[start:end]
+
+		nl := bytes.IndexByte(chunk, '\n')
+		if nl < 0 {
+			continue
+		}
+		// The header is %H<NUL>... ; the SHA is the leading 40 hex chars.
+		header := chunk[:nl]
+		z := bytes.IndexByte(header, 0)
+		if z < 0 {
+			continue
+		}
+		sha := string(header[:z])
+		fn(sha, chunk[nl+1:])
+	}
+}
+
+// parseNameStatus parses git name-status payload lines into FileChange entries.
+// Shared by getFilesChanged (per-commit `git show`) and the batched path.
+func parseNameStatus(payload []byte) []FileChange {
 	var files []FileChange
-	scanner := bufio.NewScanner(bytes.NewReader(out))
+	scanner := bufio.NewScanner(bytes.NewReader(payload))
+	scanner.Buffer(make([]byte, 64*1024), gitLogMaxScanTokenSize)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -193,23 +322,15 @@ func (c *CoCommitExtractor) getFilesChanged(sha string) ([]FileChange, error) {
 			Action: action,
 		})
 	}
-
-	return files, scanner.Err()
+	return files
 }
 
-// getLineStats runs git show --numstat to get insertion/deletion counts
-func (c *CoCommitExtractor) getLineStats(sha string) (map[string]lineStats, error) {
-	gitArgs := append([]string{"show", "--numstat", "--format=", sha}, excludePathspecArgs()...)
-	cmd := exec.Command("git", gitArgs...)
-	cmd.Dir = c.repoPath
-
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git show --numstat failed: %w", err)
-	}
-
+// parseNumstat parses git numstat payload lines into a per-path lineStats map.
+// Shared by getLineStats (per-commit `git show`) and the batched path.
+func parseNumstat(payload []byte) map[string]lineStats {
 	stats := make(map[string]lineStats)
-	scanner := bufio.NewScanner(bytes.NewReader(out))
+	scanner := bufio.NewScanner(bytes.NewReader(payload))
+	scanner.Buffer(make([]byte, 64*1024), gitLogMaxScanTokenSize)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -245,8 +366,51 @@ func (c *CoCommitExtractor) getLineStats(sha string) (map[string]lineStats, erro
 			deletions:  deletions,
 		}
 	}
+	return stats
+}
 
-	return stats, scanner.Err()
+// getFilesChanged returns the name-status file list for a commit. When the SHA
+// was primed via primeBatch it is served from the in-memory cache; otherwise it
+// falls back to a per-commit `git show --name-status`.
+func (c *CoCommitExtractor) getFilesChanged(sha string) ([]FileChange, error) {
+	if c.fileCache != nil {
+		if _, ok := c.batchedSHAs[sha]; ok {
+			return c.fileCache[sha], nil
+		}
+	}
+
+	gitArgs := append([]string{"show", "--name-status", "--format=", sha}, excludePathspecArgs()...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Dir = c.repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git show --name-status failed: %w", err)
+	}
+
+	return parseNameStatus(out), nil
+}
+
+// getLineStats returns insertion/deletion counts per file for a commit. When the
+// SHA was primed via primeBatch it is served from the in-memory cache; otherwise
+// it falls back to a per-commit `git show --numstat`.
+func (c *CoCommitExtractor) getLineStats(sha string) (map[string]lineStats, error) {
+	if c.statCache != nil {
+		if _, ok := c.batchedSHAs[sha]; ok {
+			return c.statCache[sha], nil
+		}
+	}
+
+	gitArgs := append([]string{"show", "--numstat", "--format=", sha}, excludePathspecArgs()...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Dir = c.repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git show --numstat failed: %w", err)
+	}
+
+	return parseNumstat(out), nil
 }
 
 // extractNewPath handles git's rename notation in numstat output
@@ -403,6 +567,19 @@ func shortSHA(sha string) string {
 func (c *CoCommitExtractor) ExtractAllCoCommits(events []BeadEvent) ([]CorrelatedCommit, error) {
 	var commits []CorrelatedCommit
 	fileCache := make(map[string][]FileChange) // Cache file lookups by SHA
+
+	// Batch all relevant commit SHAs through a single pair of `git log` calls so
+	// the per-event ExtractCoCommittedFiles below reads from memory instead of
+	// forking two `git show` processes per commit (#161). Collect the same SHAs
+	// the loop will actually request (status-change events only).
+	batchSHAs := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.EventType != EventClaimed && event.EventType != EventClosed {
+			continue
+		}
+		batchSHAs = append(batchSHAs, event.CommitSHA)
+	}
+	c.primeBatch(batchSHAs)
 
 	for _, event := range events {
 		// Only process status change events
