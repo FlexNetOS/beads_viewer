@@ -108,13 +108,23 @@ func explicitBeadsDBFileType(dbPath string) (SourceType, int, bool) {
 	}
 }
 
-// loadSmart discovers sources, validates, selects the best, and loads from it.
+// loadSmart discovers sources, selects the best, and loads from it in a single
+// fused pass.
+//
+// Historically discovery ran a full content-scan validation (validateJSONL) on
+// every source to set Valid/IssueCount and apply the malformed-error-rate gate,
+// and the selected source was then read AGAIN by the loader — so the 1.9MB
+// issues.jsonl was parsed twice per robot invocation. Here we skip the standalone
+// validation pass and let the loader's own tolerant parse (it already strips BOM,
+// caps long lines, and skips/counts malformed lines) serve as the validation
+// pass: the same 10% malformed-error-rate gate is applied to the loader's parse
+// stats post-load. A genuinely-corrupt JSONL is still rejected (and we fall
+// through to the next candidate), but the happy path reads the file exactly once.
 func loadSmart(beadsDir, repoPath string) ([]model.Issue, error) {
 	sources, err := DiscoverSources(DiscoveryOptions{
 		BeadsDir:               beadsDir,
 		RepoPath:               repoPath,
-		ValidateAfterDiscovery: true,
-		IncludeInvalid:         false,
+		ValidateAfterDiscovery: false,
 	})
 	if err != nil {
 		return nil, err
@@ -123,12 +133,81 @@ func loadSmart(beadsDir, repoPath string) ([]model.Issue, error) {
 		return nil, fmt.Errorf("no valid sources discovered")
 	}
 
-	best, err := SelectBestSource(sources)
+	// Order candidates exactly as SelectBestSource would (freshest, then
+	// priority) so we try the authoritative source first and fall back through
+	// the rest only if it fails to validate-and-load.
+	ordered := make([]DataSource, len(sources))
+	copy(ordered, sources)
+	sortByFreshnessThenPriority(ordered)
+
+	var lastErr error
+	for i := range ordered {
+		issues, err := loadAndValidate(ordered[i])
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return issues, nil
+	}
+
+	if lastErr != nil {
+		return nil, fmt.Errorf("no valid sources discovered: %w", lastErr)
+	}
+	return nil, fmt.Errorf("no valid sources discovered")
+}
+
+// loadAndValidate loads a single source while applying the validation gate in the
+// same pass. For SQLite the validation (integrity + schema check) is cheap and
+// independent of the row read, so it runs first. For JSONL the loader's tolerant
+// parse IS the validation pass: a single read materializes issues and yields the
+// parse stats used to apply the malformed-error-rate gate.
+func loadAndValidate(source DataSource) ([]model.Issue, error) {
+	switch source.Type {
+	case SourceTypeSQLite:
+		if err := ValidateSource(&source); err != nil {
+			return nil, err
+		}
+		return LoadFromSource(source)
+	case SourceTypeJSONLLocal, SourceTypeJSONLWorktree:
+		return loadAndValidateJSONL(source)
+	default:
+		return nil, fmt.Errorf("unsupported source type: %s", source.Type)
+	}
+}
+
+// loadAndValidateJSONL performs the fused validate-and-materialize pass for a
+// JSONL source: it parses the file once, applies the same default 10%
+// malformed-error-rate gate that validateJSONL uses, and filters tombstones to
+// honor the IssueReader contract. Reading the file a single time replaces the
+// previous validate-then-load double parse.
+func loadAndValidateJSONL(source DataSource) ([]model.Issue, error) {
+	var stats loader.ParseStats
+	all, err := loader.LoadIssuesFromFileWithOptions(source.Path, loader.ParseOptions{Stats: &stats})
 	if err != nil {
 		return nil, err
 	}
 
-	return LoadFromSource(best)
+	// Apply the error-rate gate against the same default threshold
+	// validateJSONL enforces. The loader's per-line stats use the same
+	// categories (malformed JSON or failed model validation count as errors), so
+	// a file dominated by non-issue records (e.g. a stray sprints.jsonl) or by
+	// genuinely-corrupt content is rejected here and we fall through to the next
+	// candidate. An empty file (no issue lines) has rate 0 and is valid,
+	// matching validateJSONL's empty-file behavior.
+	maxRate := DefaultValidationOptions().MaxJSONLErrorRate
+	if rate := stats.ErrorRate(); rate > maxRate {
+		return nil, fmt.Errorf("%s: too many errors: %.1f%% (max %.1f%%)", source.Path, rate*100, maxRate*100)
+	}
+
+	// Filter out tombstone issues to match the IssueReader contract (the same
+	// filtering JSONLReader.LoadIssues applies).
+	out := make([]model.Issue, 0, len(all))
+	for i := range all {
+		if !all[i].Status.IsTombstone() {
+			out = append(out, all[i])
+		}
+	}
+	return out, nil
 }
 
 // LoadFromSource loads issues from a specific DataSource via the IssueReader

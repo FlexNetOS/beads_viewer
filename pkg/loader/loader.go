@@ -467,6 +467,42 @@ type ParseOptions struct {
 	// IssueFilter optionally filters parsed issues. Return true to include.
 	// When nil, all valid issues are included.
 	IssueFilter func(*model.Issue) bool
+
+	// Stats, when non-nil, receives per-line accounting as the stream is
+	// parsed. This lets a single fused loader pass also serve as the
+	// validation pass (issue count + malformed-error-rate gate) so the
+	// 1.9MB issues.jsonl is read once instead of validate-then-load.
+	// Only issue-shaped records are accounted; non-issue `_type` records,
+	// empty lines, and long-skipped lines are not counted toward the gate,
+	// matching datasource.validateJSONL semantics.
+	Stats *ParseStats
+}
+
+// ParseStats accumulates per-line accounting for a single parse pass so a load
+// can also produce the corruption verdict (malformed-error-rate gate) without a
+// second read of the file. The categories mirror datasource.validateJSONL: a line
+// counts toward Valid when its JSON decodes AND the resulting issue passes model
+// validation (which subsumes the required id/title/status check), and toward
+// Errors when the JSON is malformed OR the issue fails validation. Empty lines,
+// over-long skipped lines, and recognized non-issue `_type` records are not
+// accounted (they are not issue lines), matching validateJSONL's behavior of
+// only gating on issue-shaped content.
+type ParseStats struct {
+	// Valid is the number of issue-shaped lines that parsed and validated.
+	Valid int
+	// Errors is the number of issue-shaped lines that were malformed JSON or
+	// failed model validation (e.g. missing required fields).
+	Errors int
+}
+
+// ErrorRate returns the fraction of accounted issue lines that were errors.
+// Returns 0 when no issue lines were seen (an empty file is valid).
+func (s ParseStats) ErrorRate() float64 {
+	total := s.Valid + s.Errors
+	if total == 0 {
+		return 0
+	}
+	return float64(s.Errors) / float64(total)
 }
 
 // LoadIssuesFromFileWithOptions reads issues from a file with custom options.
@@ -649,6 +685,9 @@ func parseIssuesWithOptions(r io.Reader, opts ParseOptions, usePool bool) ([]mod
 			issue := GetIssue()
 			if err := json.Unmarshal(line, issue); err != nil {
 				PutIssue(issue)
+				if opts.Stats != nil {
+					opts.Stats.Errors++
+				}
 				// Skip malformed lines but warn
 				warn(fmt.Sprintf("skipping malformed JSON on line %d: %v", lineNum, err))
 				continue
@@ -659,9 +698,15 @@ func parseIssuesWithOptions(r io.Reader, opts ParseOptions, usePool bool) ([]mod
 			// Validate issue
 			if err := issue.Validate(); err != nil {
 				PutIssue(issue)
+				if opts.Stats != nil {
+					opts.Stats.Errors++
+				}
 				// Skip invalid issues
 				warn(fmt.Sprintf("skipping invalid issue on line %d: %v", lineNum, err))
 				continue
+			}
+			if opts.Stats != nil {
+				opts.Stats.Valid++
 			}
 
 			if opts.IssueFilter != nil && !opts.IssueFilter(issue) {
@@ -679,6 +724,9 @@ func parseIssuesWithOptions(r io.Reader, opts ParseOptions, usePool bool) ([]mod
 		} else {
 			var issue model.Issue
 			if err := json.Unmarshal(line, &issue); err != nil {
+				if opts.Stats != nil {
+					opts.Stats.Errors++
+				}
 				// Skip malformed lines but warn
 				warn(fmt.Sprintf("skipping malformed JSON on line %d: %v", lineNum, err))
 				continue
@@ -688,9 +736,15 @@ func parseIssuesWithOptions(r io.Reader, opts ParseOptions, usePool bool) ([]mod
 
 			// Validate issue
 			if err := issue.Validate(); err != nil {
+				if opts.Stats != nil {
+					opts.Stats.Errors++
+				}
 				// Skip invalid issues
 				warn(fmt.Sprintf("skipping invalid issue on line %d: %v", lineNum, err))
 				continue
+			}
+			if opts.Stats != nil {
+				opts.Stats.Valid++
 			}
 
 			if opts.IssueFilter != nil && !opts.IssueFilter(&issue) {
