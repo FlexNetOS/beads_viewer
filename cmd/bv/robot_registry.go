@@ -1719,7 +1719,7 @@ func handleRobotTriage(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) error
 							}
 						}
 						correlator := correlation.NewCorrelator(workDir, beadsPath)
-						if report, err := correlator.GenerateReport(beadInfos, correlation.CorrelatorOptions{Limit: limit}); err == nil {
+						if report, err := correlator.GenerateReportCached(beadInfos, correlation.CorrelatorOptions{Limit: limit}); err == nil {
 							historyReport = report
 						}
 					}
@@ -1884,7 +1884,7 @@ func handleRobotHistory(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) erro
 		}
 	}
 
-	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReport(beadInfos, opts)
+	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReportCached(beadInfos, opts)
 	if err != nil {
 		return fmt.Errorf("generating history report: %w", err)
 	}
@@ -1950,7 +1950,7 @@ func generateCorrelationReport(workDir string, issues []model.Issue, opts correl
 	if err != nil {
 		return nil, err
 	}
-	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReport(buildCorrelationBeadInfos(issues), opts)
+	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReportCached(buildCorrelationBeadInfos(issues), opts)
 	if err != nil {
 		return nil, fmt.Errorf("generating history report: %w", err)
 	}
@@ -2209,7 +2209,7 @@ func handleRobotFileRelations(ctx RobotContext, cfg phaseThreeRobotHandlerConfig
 	if cfg.HistoryLimit != nil {
 		limit = *cfg.HistoryLimit
 	}
-	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReport(beadInfos, correlation.CorrelatorOptions{Limit: limit})
+	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReportCached(beadInfos, correlation.CorrelatorOptions{Limit: limit})
 	if err != nil {
 		return fmt.Errorf("generating history report: %w", err)
 	}
@@ -2449,7 +2449,7 @@ func handleRobotRelated(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) erro
 	if cfg.HistoryLimit != nil {
 		limit = *cfg.HistoryLimit
 	}
-	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReport(beadInfos, correlation.CorrelatorOptions{Limit: limit})
+	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReportCached(beadInfos, correlation.CorrelatorOptions{Limit: limit})
 	if err != nil {
 		return fmt.Errorf("generating history report: %w", err)
 	}
@@ -2561,7 +2561,7 @@ func handleRobotImpactNetwork(ctx RobotContext, cfg phaseThreeRobotHandlerConfig
 	if cfg.HistoryLimit != nil {
 		limit = *cfg.HistoryLimit
 	}
-	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReport(beadInfos, correlation.CorrelatorOptions{Limit: limit})
+	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReportCached(beadInfos, correlation.CorrelatorOptions{Limit: limit})
 	if err != nil {
 		return fmt.Errorf("generating history report: %w", err)
 	}
@@ -2634,7 +2634,7 @@ func handleRobotCausality(ctx RobotContext, cfg phaseThreeRobotHandlerConfig) er
 	if cfg.HistoryLimit != nil {
 		limit = *cfg.HistoryLimit
 	}
-	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReport(beadInfos, correlation.CorrelatorOptions{Limit: limit})
+	report, err := correlation.NewCorrelator(workDir, beadsPath).GenerateReportCached(beadInfos, correlation.CorrelatorOptions{Limit: limit})
 	if err != nil {
 		return fmt.Errorf("generating history report: %w", err)
 	}
