@@ -716,3 +716,53 @@ func TestRobotDiskCache_EvictsToMaxEntries(t *testing.T) {
 		t.Fatalf("expected 10 entries after eviction, got %d", len(cf.Entries))
 	}
 }
+
+// BenchmarkRobotDiskCache_ReadHit measures the steady-state read-hit path: a
+// large graph's stats are already cached, the context is cancelled (so XFetch
+// never forces a recompute), and the entry count stays at 1 (so LRU eviction is
+// a no-op on both baseline and candidate). This isolates the cost the
+// DiskCache-NoRewriteOnHit optimization targets: rewriting the whole multi-MB
+// cache file on every hit just to bump the LRU AccessedAt timestamp. Run on
+// baseline vs candidate to compare.
+func BenchmarkRobotDiskCache_ReadHit(b *testing.B) {
+	b.Setenv("BV_ROBOT", "1")
+	cacheDir := b.TempDir()
+	b.Setenv("BV_CACHE_DIR", cacheDir)
+
+	// A large dependency graph so the cached GraphStats payload (PageRank,
+	// betweenness, etc. maps) is multi-MB, like the real cache.
+	const n = 4000
+	issues := make([]model.Issue, 0, n)
+	for i := 0; i < n; i++ {
+		iss := model.Issue{ID: fmt.Sprintf("ISSUE-%05d", i), Status: model.StatusOpen}
+		if i > 0 {
+			iss.Dependencies = []*model.Dependency{
+				{DependsOnID: fmt.Sprintf("ISSUE-%05d", i-1), Type: model.DepBlocks},
+			}
+		}
+		issues = append(issues, iss)
+	}
+
+	// Populate the single target entry via the real compute+put path.
+	config := analysis.ConfigForSize(n, n-1)
+	an := analysis.NewAnalyzer(issues)
+	stats1 := an.AnalyzeAsyncWithConfig(context.Background(), config)
+	stats1.WaitForPhase2()
+
+	cachePath := filepath.Join(cacheDir, "analysis_cache.json")
+	if fi, err := os.Stat(cachePath); err == nil {
+		b.Logf("cache size: %d bytes", fi.Size())
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // cancelled ctx => XFetch never triggers recompute: pure read-hit
+		an2 := analysis.NewAnalyzer(issues)
+		s := an2.AnalyzeAsyncWithConfig(ctx, config)
+		s.WaitForPhase2()
+		if !s.IsPhase2Ready() {
+			b.Fatal("expected phase2 ready on cache hit")
+		}
+	}
+}

@@ -953,11 +953,18 @@ func getRobotDiskCachedStats(fullKey string) (stats *GraphStats, xfetchRefresh b
 		!now.Before(entry.CreatedAt.Add(entry.ComputeDuration)) &&
 		xfetch.ShouldRefresh(entry.CreatedAt, entry.ComputeDuration, 1.0, now)
 
-	entry.AccessedAt = now.UTC()
-	cf.Entries[fullKey] = entry
-	evictRobotDiskCacheLRU(cf.Entries)
-	_ = writeRobotDiskCacheLocked(f, cf)
-
+	// Pure read-hit: do NOT rewrite the entire cache file just to bump the LRU
+	// AccessedAt timestamp. Rewriting the full (multi-MB) file with encoding/json
+	// on every robot invocation dominates the cost of a cache hit, and the
+	// bookkeeping it persists is not load-bearing for correctness:
+	//   - Staleness uses beadsDirModTime vs entry.CreatedAt, never AccessedAt.
+	//   - Pruning (maxAge) and LRU eviction (maxEntries) are re-applied, and
+	//     persisted, on the write path (putRobotDiskCachedStats) that runs after
+	//     every real recompute, plus on the miss/stale branches above when the
+	//     entry set actually changes.
+	// Skipping the write here means a frequently-read-but-never-recomputed entry
+	// won't have its LRU recency persisted; eviction falls back to CreatedAt for
+	// such entries, which is an acceptable LRU approximation.
 	return entry.Result.toGraphStats(), shouldXFetchRefresh, true
 }
 
