@@ -143,3 +143,41 @@ True original (0ef0e25) vs final, isolated caches, this host. All outputs byte-i
 orig has no correlation caching, so every repeat scenario stays ~2.26s.
 Residual on the new-commit path (~0.40s) is co-commit `primeBatch` (still scans all commit
 SHAs); it is per-commit-immutable and the clear next target (same content-addressed pattern).
+
+## Pass 14 — Correlation-CoCommitIncremental (per-commit co-commit cache)
+Addresses the residual called out above: `primeBatch` is now content-addressed and
+PERSISTENT per commit SHA. A commit's `(files, lineStats)` is a pure function of
+(SHA, exclude-pathspec set), so each SHA's diff is cached forever
+(`per_commit_cocommit_cache.go`, mirroring `per_commit_event_cache.go`:
+goccy codec, flock, 30d age bound, 4000-commit cap, 96MB ceiling,
+namespace = sha256(`excludePathspecArgs()`)+schema; `lineStats` round-trips via an
+exported `lineStatsWire` mirror). On the new-commit path the co-commit
+`git log --no-walk` passes now fetch only the NEW SHAs.
+
+**New-commit path, git-subprocess count (report + head-artifact caches stripped,
+per-commit caches warm), this host:**
+
+| binary | total git calls | co-commit `git log --no-walk` calls | SHAs batched |
+|---|---|---|---|
+| pre-pass-14 (HEAD) | 7 | 2 (name-status + numstat) | 168 each |
+| pass-14 (warm co-commit cache) | 5 | **0** | 0 |
+
+Wall-clock on this repo's scale: new-commit path ~0.10s, fully-warm ~0.10s,
+cold-first-ever ~1.03s (all unchanged in wall-time; the two batched co-commit
+`git log` subprocesses over 168 SHAs are eliminated outright). The absolute ms
+saving is small at this store size because the batched co-commit logs were already
+cheap relative to fixed process overhead, but the per-SHA git work on the
+new-commit path is now O(new commits) instead of O(all commits).
+
+**Proof:** `TestPerCommitCoCommitDifferential` asserts byte-identical
+`[]CorrelatedCommit` across full (cache off) / cold / fully-warm / k=1,3,10-new, and
+the git-fetch SHA count = all (full,cold), 0 (fully-warm), exactly k (k-new). Cand
+binary byte-identical to pre-pass-14 HEAD on all four robot commands run same-day;
+goldens OK (only staleness-day drift vs yesterday's recording); `go test -race
+./pkg/correlation/...` green; build / vet / gofmt / ubs clean.
+
+**Residual after pass 14:** the new-commit path still runs, per new commit, the
+snapshot blob reads for the event extraction (pass-13 cache covers only commits
+already seen) and the cheap report re-assembly; HEAD `rev-parse`, the snapshot
+`git log --raw --follow` enumeration, and `git cat-file` for the new commits' blobs
+remain. Co-commit git work is no longer on the hot path for already-seen commits.
