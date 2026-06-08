@@ -167,29 +167,70 @@ func writePerCommitCoCommitCacheLocked(f *os.File, cf perCommitCoCommitCacheFile
 	if cf.Entries == nil {
 		cf.Entries = map[string]perCommitCoCommitNamespaceBucket{}
 	}
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return err
-	}
-	data, err := json.Marshal(cf)
-	if err != nil {
-		return err
-	}
-	if len(data) > perCommitCoCommitCacheMaxFileSize {
-		// Refuse to persist a pathologically large file; we already truncated, so
-		// write an empty valid file instead of leaving a half-written one.
-		empty := perCommitCoCommitCacheFile{Version: perCommitCoCommitCacheVersion, Entries: map[string]perCommitCoCommitNamespaceBucket{}}
-		data, err = json.Marshal(empty)
+	// Marshal BEFORE truncating and evict the oldest commits until the file fits,
+	// rather than wiping every namespace on overflow (which would force a full
+	// co-commit re-extraction). See evictOldestPerCommitCoCommit / the matching
+	// per_commit_event_cache.go rationale.
+	for {
+		data, err := json.Marshal(cf)
 		if err != nil {
 			return err
 		}
+		if len(data) <= perCommitCoCommitCacheMaxFileSize || !evictOldestPerCommitCoCommit(cf.Entries) {
+			if err := f.Truncate(0); err != nil {
+				return err
+			}
+			if _, err := f.Seek(0, 0); err != nil {
+				return err
+			}
+			if _, err := f.Write(data); err != nil {
+				return err
+			}
+			return f.Sync()
+		}
 	}
-	if _, err := f.Write(data); err != nil {
-		return err
+}
+
+// evictOldestPerCommitCoCommit drops the oldest ~10% of commits (at least one)
+// across all namespaces, oldest-CreatedAt first with a deterministic (ns,sha)
+// tie-break. Returns false when there is nothing left to evict.
+func evictOldestPerCommitCoCommit(entries map[string]perCommitCoCommitNamespaceBucket) bool {
+	type item struct {
+		ns, sha string
+		t       time.Time
 	}
-	return f.Sync()
+	var all []item
+	for ns, bucket := range entries {
+		for sha, e := range bucket.Commits {
+			all = append(all, item{ns: ns, sha: sha, t: e.CreatedAt})
+		}
+	}
+	if len(all) == 0 {
+		return false
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].t.Equal(all[j].t) {
+			if all[i].ns == all[j].ns {
+				return all[i].sha < all[j].sha
+			}
+			return all[i].ns < all[j].ns
+		}
+		return all[i].t.Before(all[j].t)
+	})
+	drop := len(all) / 10
+	if drop < 1 {
+		drop = 1
+	}
+	for i := 0; i < drop && i < len(all); i++ {
+		it := all[i]
+		if b, ok := entries[it.ns]; ok {
+			delete(b.Commits, it.sha)
+			if len(b.Commits) == 0 {
+				delete(entries, it.ns)
+			}
+		}
+	}
+	return true
 }
 
 // pruneAndBoundPerCommitCoCommitEntries drops aged entries (across all

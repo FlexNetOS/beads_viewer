@@ -921,7 +921,10 @@ func expandFloat(set bool, idx []int32, vals []float64, nodes []string) map[stri
 	}
 	m := make(map[string]float64, len(idx))
 	for i, ni := range idx {
-		if int(ni) < len(nodes) && i < len(vals) {
+		// ni >= 0 guards a corrupt/hand-edited cache file with a negative sparse
+		// index: nodes[-1] would panic and crash the whole bv command. A bad cache
+		// must degrade to a miss, never panic.
+		if ni >= 0 && int(ni) < len(nodes) && i < len(vals) {
 			m[nodes[ni]] = vals[i]
 		}
 	}
@@ -943,7 +946,9 @@ func expandInt(set bool, idx []int32, vals []int, nodes []string) map[string]int
 	}
 	m := make(map[string]int, len(idx))
 	for i, ni := range idx {
-		if int(ni) < len(nodes) && i < len(vals) {
+		// ni >= 0: see expandFloat — guards against a negative index in a corrupt
+		// cache file panicking instead of degrading to a miss.
+		if ni >= 0 && int(ni) < len(nodes) && i < len(vals) {
 			m[nodes[ni]] = vals[i]
 		}
 	}

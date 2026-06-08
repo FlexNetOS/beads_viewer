@@ -221,3 +221,31 @@ func TestPruneAndBoundPerCommitEntries(t *testing.T) {
 		t.Fatalf("oldest surviving key %q suggests wrong entries evicted", keys[0])
 	}
 }
+
+// TestEvictOldestPerCommitEventsPreservesNewest guards the size-overflow path:
+// the writer evicts the OLDEST commits (keeping newest) instead of wiping the
+// whole file, and returns false only when nothing remains.
+func TestEvictOldestPerCommitEventsPreservesNewest(t *testing.T) {
+	base := time.Now().UTC()
+	ents := map[string]perCommitNamespaceBucket{
+		"ns": {Commits: map[string]perCommitEventEntry{
+			"old": {CreatedAt: base.Add(-3 * time.Hour)},
+			"mid": {CreatedAt: base.Add(-2 * time.Hour)},
+			"new": {CreatedAt: base.Add(-1 * time.Hour)},
+		}},
+	}
+	if !evictOldestPerCommitEvents(ents) {
+		t.Fatal("expected eviction to occur")
+	}
+	if _, ok := ents["ns"].Commits["old"]; ok {
+		t.Error("oldest commit should have been evicted first")
+	}
+	if _, ok := ents["ns"].Commits["new"]; !ok {
+		t.Error("newest commit must be preserved")
+	}
+	for evictOldestPerCommitEvents(ents) {
+	}
+	if evictOldestPerCommitEvents(ents) {
+		t.Error("evict on empty must return false (loop terminates)")
+	}
+}

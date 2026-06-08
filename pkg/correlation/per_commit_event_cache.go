@@ -133,30 +133,72 @@ func writePerCommitEventCacheLocked(f *os.File, cf perCommitEventCacheFile) erro
 	if cf.Entries == nil {
 		cf.Entries = map[string]perCommitNamespaceBucket{}
 	}
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return err
-	}
-	data, err := json.Marshal(cf)
-	if err != nil {
-		return err
-	}
-	if len(data) > perCommitEventCacheMaxFileSize {
-		// Refuse to persist a pathologically large file; leave whatever is on
-		// disk (a previous, smaller good state) untouched is not possible here
-		// since we already truncated, so write an empty valid file instead.
-		empty := perCommitEventCacheFile{Version: perCommitEventCacheVersion, Entries: map[string]perCommitNamespaceBucket{}}
-		data, err = json.Marshal(empty)
+	// Marshal BEFORE truncating, evicting the oldest commits until the encoded
+	// file fits under the byte ceiling. Earlier this truncated first and, on
+	// overflow, wrote an EMPTY file — wiping every namespace and forcing a full
+	// (232MB) re-extraction, defeating the incremental cache. Evicting oldest-first
+	// keeps the most recently-useful entries; only a truly pathological single
+	// entry (>ceiling, impossible at ~24KB/commit) would empty it.
+	for {
+		data, err := json.Marshal(cf)
 		if err != nil {
 			return err
 		}
+		if len(data) <= perCommitEventCacheMaxFileSize || !evictOldestPerCommitEvents(cf.Entries) {
+			if err := f.Truncate(0); err != nil {
+				return err
+			}
+			if _, err := f.Seek(0, 0); err != nil {
+				return err
+			}
+			if _, err := f.Write(data); err != nil {
+				return err
+			}
+			return f.Sync()
+		}
 	}
-	if _, err := f.Write(data); err != nil {
-		return err
+}
+
+// evictOldestPerCommitEvents drops the oldest ~10% of commits (at least one)
+// across all namespaces, oldest-CreatedAt first with a deterministic (ns,sha)
+// tie-break. Returns false when there is nothing left to evict.
+func evictOldestPerCommitEvents(entries map[string]perCommitNamespaceBucket) bool {
+	type item struct {
+		ns, sha string
+		t       time.Time
 	}
-	return f.Sync()
+	var all []item
+	for ns, bucket := range entries {
+		for sha, e := range bucket.Commits {
+			all = append(all, item{ns: ns, sha: sha, t: e.CreatedAt})
+		}
+	}
+	if len(all) == 0 {
+		return false
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].t.Equal(all[j].t) {
+			if all[i].ns == all[j].ns {
+				return all[i].sha < all[j].sha
+			}
+			return all[i].ns < all[j].ns
+		}
+		return all[i].t.Before(all[j].t)
+	})
+	drop := len(all) / 10
+	if drop < 1 {
+		drop = 1
+	}
+	for i := 0; i < drop && i < len(all); i++ {
+		it := all[i]
+		if b, ok := entries[it.ns]; ok {
+			delete(b.Commits, it.sha)
+			if len(b.Commits) == 0 {
+				delete(entries, it.ns)
+			}
+		}
+	}
+	return true
 }
 
 // pruneAndBoundPerCommitEntries drops aged entries (across all namespaces) and,

@@ -137,3 +137,23 @@ func TestRobotDiskCache_VersionGate(t *testing.T) {
 		t.Fatalf("expected v1 cache to be ignored (0 entries), got %d", len(cf.Entries))
 	}
 }
+
+// TestExpandFloatIntNegativeIndexNoPanic guards a corrupt/hand-edited cache file
+// with a NEGATIVE sparse index: it must degrade (drop the bad entry) rather than
+// panic on nodes[-1] and crash the whole bv command.
+func TestExpandFloatIntNegativeIndexNoPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panicked on negative index (must degrade to a miss): %v", r)
+		}
+	}()
+	nodes := []string{"a", "b"}
+	fm := expandFloat(true, []int32{-1, 1}, []float64{9.0, 2.0}, nodes)
+	if len(fm) != 1 || fm["b"] != 2.0 {
+		t.Errorf("expandFloat: expected only the valid index kept, got %v", fm)
+	}
+	im := expandInt(true, []int32{-3}, []int{7}, nodes)
+	if len(im) != 0 {
+		t.Errorf("expandInt: expected empty (only negative index), got %v", im)
+	}
+}
