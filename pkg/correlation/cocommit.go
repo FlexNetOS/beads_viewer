@@ -232,8 +232,8 @@ func (c *CoCommitExtractor) primeBatch(shas []string) {
 
 	atomic.AddInt64(&coCommitFetchedSHAsCounter, int64(len(missing)))
 
-	files := c.batchFilesChanged(missing)
-	stats := c.batchLineStats(missing)
+	files, ferr := c.batchFilesChanged(missing)
+	stats, serr := c.batchLineStats(missing)
 	fresh := make(map[string]perCommitCoCommitEntry, len(missing))
 	now := time.Now().UTC()
 	for _, sha := range missing {
@@ -256,7 +256,16 @@ func (c *CoCommitExtractor) primeBatch(shas []string) {
 	}
 	// Persist only the freshly fetched SHAs (no-rewrite-on-pure-hit: when every
 	// requested SHA was already on disk, missing is empty and we returned above).
-	storePerCommitCoCommit(namespace, fresh)
+	// CRITICAL: never persist when EITHER git pass failed — a transient git error
+	// (concurrent gc, OOM-killed subprocess, lock contention) would otherwise write
+	// definitive "empty diff" entries that are served as cache hits for 30 days,
+	// permanently dropping those commits' co-commit correlations. On failure the
+	// in-memory maps still degrade to empty for THIS run (matching the legacy
+	// per-commit path, which skipped the commit for the run), but disk stays clean
+	// so the next process retries.
+	if ferr == nil && serr == nil {
+		storePerCommitCoCommit(namespace, fresh)
+	}
 }
 
 // batchLogArgs builds `git log --no-walk=unsorted <diffFlag> --format=<header>
@@ -271,39 +280,44 @@ func batchLogArgs(diffFlag string, shas []string) []string {
 }
 
 // batchFilesChanged runs one `git log --name-status` over all SHAs and returns
-// per-SHA FileChange lists using the same parsing as getFilesChanged.
-func (c *CoCommitExtractor) batchFilesChanged(shas []string) map[string][]FileChange {
+// per-SHA FileChange lists using the same parsing as getFilesChanged. It
+// returns an error (not just an empty map) on git failure so
+// the caller can avoid persisting a poisoned "empty diff" entry for SHAs that
+// were never actually inspected. A successful run with a genuinely-empty diff for
+// some SHA still returns no error (the empty result is correct and cacheable).
+func (c *CoCommitExtractor) batchFilesChanged(shas []string) (map[string][]FileChange, error) {
 	files := make(map[string][]FileChange, len(shas))
 
 	cmd := exec.Command("git", withNoColorGit(batchLogArgs("--name-status", shas))...)
 	cmd.Dir = c.repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		return files
+		return files, err
 	}
 
 	c.forEachCommitChunk(out, func(sha string, payload []byte) {
 		files[sha] = parseNameStatus(payload)
 	})
-	return files
+	return files, nil
 }
 
 // batchLineStats runs one `git log --numstat` over all SHAs and returns per-SHA
-// line-stat maps using the same parsing as getLineStats.
-func (c *CoCommitExtractor) batchLineStats(shas []string) map[string]map[string]lineStats {
+// line-stat maps using the same parsing as getLineStats. Like batchFilesChanged,
+// a git failure is surfaced as an error so the caller skips persisting empties.
+func (c *CoCommitExtractor) batchLineStats(shas []string) (map[string]map[string]lineStats, error) {
 	stats := make(map[string]map[string]lineStats, len(shas))
 
 	cmd := exec.Command("git", withNoColorGit(batchLogArgs("--numstat", shas))...)
 	cmd.Dir = c.repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		return stats
+		return stats, err
 	}
 
 	c.forEachCommitChunk(out, func(sha string, payload []byte) {
 		stats[sha] = parseNumstat(payload)
 	})
-	return stats
+	return stats, nil
 }
 
 // forEachCommitChunk splits a `git log --format=<header>` stream into per-commit

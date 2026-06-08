@@ -392,11 +392,21 @@ func (e *Extractor) readBlobs(ids []string) (map[string][]byte, error) {
 		return nil
 	}()
 
-	wErr := <-writeErr
-	waitErr := cmd.Wait()
 	if parseErr != nil {
+		// We stopped reading stdout mid-stream. If git's stdout pipe has filled,
+		// git blocks writing → stops reading stdin → the writer goroutine blocks
+		// on Flush/WriteString, so a plain `<-writeErr` here would deadlock on
+		// large histories. Kill git first (mirroring the legacy `git log -p`
+		// path's Process.Kill on parse error): that breaks the stdin pipe, the
+		// writer returns, and Wait completes. Then surface the parse error.
+		_ = cmd.Process.Kill()
+		<-writeErr
+		_ = cmd.Wait()
 		return nil, parseErr
 	}
+
+	wErr := <-writeErr
+	waitErr := cmd.Wait()
 	if wErr != nil {
 		return nil, fmt.Errorf("writing cat-file ids: %w", wErr)
 	}

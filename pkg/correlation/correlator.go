@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	json "github.com/goccy/go-json"
 )
 
 // Correlator orchestrates the extraction and correlation of bead history data
@@ -46,6 +48,42 @@ type CorrelatorOptions struct {
 type historyArtifact struct {
 	Events  []BeadEvent        `json:"events"`
 	Commits []CorrelatedCommit `json:"commits"`
+}
+
+// CorrelatedCommit.BeadID carries the json:"-" tag (it is internal linking state,
+// intentionally hidden from the public report JSON). The HEAD-artifact disk cache,
+// however, serializes the PRE-assembly Commits slice and MUST round-trip BeadID —
+// assembleReport groups commits onto beads by exactly that field. Without this the
+// cache would return commit-less reports on the middle-tier (bead-edit) path.
+// Custom (Un)MarshalJSON preserves BeadID via a parallel commit_bead_ids array
+// without disturbing the public CorrelatedCommit tag.
+type historyArtifactWire struct {
+	Events        []BeadEvent        `json:"events"`
+	Commits       []CorrelatedCommit `json:"commits"`
+	CommitBeadIDs []string           `json:"commit_bead_ids,omitempty"`
+}
+
+func (a historyArtifact) MarshalJSON() ([]byte, error) {
+	ids := make([]string, len(a.Commits))
+	for i := range a.Commits {
+		ids[i] = a.Commits[i].BeadID
+	}
+	return json.Marshal(historyArtifactWire{Events: a.Events, Commits: a.Commits, CommitBeadIDs: ids})
+}
+
+func (a *historyArtifact) UnmarshalJSON(b []byte) error {
+	var w historyArtifactWire
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	a.Events = w.Events
+	a.Commits = w.Commits
+	for i := range a.Commits {
+		if i < len(w.CommitBeadIDs) {
+			a.Commits[i].BeadID = w.CommitBeadIDs[i]
+		}
+	}
+	return nil
 }
 
 // extractHistoryArtifact runs ONLY the HEAD/options-dependent extraction steps

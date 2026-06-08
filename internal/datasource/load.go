@@ -188,15 +188,26 @@ func loadAndValidateJSONL(source DataSource) ([]model.Issue, error) {
 	}
 
 	// Apply the error-rate gate against the same default threshold
-	// validateJSONL enforces. The loader's per-line stats use the same
-	// categories (malformed JSON or failed model validation count as errors), so
-	// a file dominated by non-issue records (e.g. a stray sprints.jsonl) or by
-	// genuinely-corrupt content is rejected here and we fall through to the next
-	// candidate. An empty file (no issue lines) has rate 0 and is valid,
-	// matching validateJSONL's empty-file behavior.
+	// validateJSONL enforces. Malformed JSON or failed model validation count as
+	// Errors, so a genuinely-corrupt file is rejected here and we fall through to
+	// the next candidate.
 	maxRate := DefaultValidationOptions().MaxJSONLErrorRate
 	if rate := stats.ErrorRate(); rate > maxRate {
 		return nil, fmt.Errorf("%s: too many errors: %.1f%% (max %.1f%%)", source.Path, rate*100, maxRate*100)
+	}
+
+	// Reject a source that contained records but yielded ZERO valid issues — e.g.
+	// a fresher stray sprints.jsonl/memories.jsonl, or a file made entirely of
+	// non-issue `_type` records. The error-rate gate above misses these because
+	// non-issue records are Skipped (not Errors), so the rate is 0. The old
+	// validateJSONL counted every such non-issue line as an error and rejected the
+	// file; this reproduces that so loadSmart falls through to the next candidate
+	// instead of returning an empty list as "success". An empty file (no records
+	// at all: Valid==Errors==Skipped==0) stays valid — a legitimately empty
+	// project — matching validateJSONL's empty-file behavior. A file with Valid>0
+	// whose issues are all tombstones is a real issues file and is accepted.
+	if stats.Valid == 0 && stats.Errors+stats.Skipped > 0 {
+		return nil, fmt.Errorf("%s: no issue records (%d non-issue/error lines, 0 valid issues)", source.Path, stats.Errors+stats.Skipped)
 	}
 
 	// Filter out tombstone issues to match the IssueReader contract (the same

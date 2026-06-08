@@ -485,16 +485,22 @@ type ParseOptions struct {
 // second read of the file. The categories mirror datasource.validateJSONL: a line
 // counts toward Valid when its JSON decodes AND the resulting issue passes model
 // validation (which subsumes the required id/title/status check), and toward
-// Errors when the JSON is malformed OR the issue fails validation. Empty lines,
-// over-long skipped lines, and recognized non-issue `_type` records are not
-// accounted (they are not issue lines), matching validateJSONL's behavior of
-// only gating on issue-shaped content.
+// Errors when the JSON is malformed OR the issue fails validation. Empty lines
+// and over-long skipped lines are not accounted. Recognized non-issue `_type`
+// records (and unknown `_type`) count toward Skipped — they are not errors, but
+// a file made ENTIRELY of them yielded zero issues, which callers use to reject a
+// wrong/non-issue source (e.g. a stray sprints.jsonl) rather than treat it as a
+// valid empty project.
 type ParseStats struct {
 	// Valid is the number of issue-shaped lines that parsed and validated.
 	Valid int
 	// Errors is the number of issue-shaped lines that were malformed JSON or
 	// failed model validation (e.g. missing required fields).
 	Errors int
+	// Skipped is the number of recognized non-issue `_type` records (memory,
+	// sprint, forecast, burndown, ignore) plus unknown `_type` records — content
+	// that was present but is not an issue.
+	Skipped int
 }
 
 // ErrorRate returns the fraction of accounted issue lines that were errors.
@@ -701,12 +707,18 @@ func processIssueLine(
 	case recordTypeMemory, recordTypeSprint, recordTypeForecast, recordTypeBurndown, recordTypeIgnore:
 		// Recognized non-issue record. The viewer doesn't surface
 		// these yet, so silently skip — we just need to not warn.
+		if stats != nil {
+			stats.Skipped++
+		}
 		return issues, poolRefs
 	default:
 		// Unknown _type: don't fail, but don't pretend it was an
 		// issue either. A debug-level breadcrumb is enough; the
 		// noisy "issue ID cannot be empty" warning was the actual
 		// bug being reported.
+		if stats != nil {
+			stats.Skipped++
+		}
 		return issues, poolRefs
 	}
 
@@ -1010,6 +1022,7 @@ func parseIssuesParallel(data []byte, opts ParseOptions, usePool bool, maxCapaci
 		}
 		stats.Valid += results[i].stats.Valid
 		stats.Errors += results[i].stats.Errors
+		stats.Skipped += results[i].stats.Skipped
 		// Warnings within a chunk are already in line order; chunks are in
 		// order, so concatenating preserves global line order.
 		for _, pw := range results[i].warns {
@@ -1020,6 +1033,7 @@ func parseIssuesParallel(data []byte, opts ParseOptions, usePool bool, maxCapaci
 	if opts.Stats != nil {
 		opts.Stats.Valid += stats.Valid
 		opts.Stats.Errors += stats.Errors
+		opts.Stats.Skipped += stats.Skipped
 	}
 
 	return issues, poolRefs, nil
@@ -1055,10 +1069,11 @@ func parseChunkLines(chunk []byte, startLine int, isFirstChunk bool, opts ParseO
 			line = line[:n-1]
 		}
 
-		// Per-line byte cap. The serial path emits this warning when a single
-		// line exceeds the buffer and skips it, consuming one lineNum. We mirror
-		// that: an over-long line is skipped with the same message.
-		if len(line) > maxCapacity {
+		// Per-line byte cap. The serial path uses bufio.Reader.ReadLine, which
+		// sets isPrefix (→ skip) once a line's content length REACHES the buffer
+		// size, i.e. for len >= maxCapacity. Mirror that exactly (>=, not >), so a
+		// line of length exactly maxCapacity is skipped identically to serial.
+		if len(line) >= maxCapacity {
 			warn(lineNum, fmt.Sprintf("skipping line %d: line too long (exceeds %d bytes)", lineNum, maxCapacity))
 			continue
 		}

@@ -262,22 +262,26 @@ type validationProbe interface {
 }
 
 // defaultProbe captures presence of the default required fields
-// (id/title/status). Pointer fields distinguish "absent" (nil) from "present".
-// goccy decodes this via structDecoder, avoiding interfaceDecoder/mapDecoder.
+// (id/title/status). It uses NON-pointer json.RawMessage values: an absent field
+// stays nil (len 0), while a PRESENT field — including an explicit `null` — gets
+// its raw bytes (e.g. the 4 bytes "null", len 4). So presence == len(raw) > 0.
+// This matches the old map[string]interface{} semantics (and the rawProbe path),
+// where "id":null counts as present, not missing. goccy decodes this via
+// structDecoder, avoiding interfaceDecoder/mapDecoder.
 type defaultProbe struct {
-	ID     *json.RawMessage `json:"id"`
-	Title  *json.RawMessage `json:"title"`
-	Status *json.RawMessage `json:"status"`
+	ID     json.RawMessage `json:"id"`
+	Title  json.RawMessage `json:"title"`
+	Status json.RawMessage `json:"status"`
 }
 
 func (p *defaultProbe) has(field string) bool {
 	switch field {
 	case "id":
-		return p.ID != nil
+		return len(p.ID) > 0
 	case "title":
-		return p.Title != nil
+		return len(p.Title) > 0
 	case "status":
-		return p.Status != nil
+		return len(p.Status) > 0
 	default:
 		return false
 	}
@@ -417,12 +421,14 @@ func validateJSONL(source *DataSource, opts ValidationOptions) error {
 		// generic decode into map[string]interface{} (goccy's
 		// interfaceDecoder/mapDecoder reflection path) and instead decode into
 		// a small typed struct (goccy's structDecoder) that only captures the
-		// required fields. Pointer fields distinguish "absent" (nil) from
-		// "present but empty", preserving the missing-required-field check.
+		// required fields. For the default {id,title,status} set, defaultProbe
+		// uses json.RawMessage values so a present field — including an explicit
+		// `null` — counts as present (len(raw) > 0), matching the old
+		// map[string]interface{} semantics; an absent field stays nil (len 0).
 		//
-		// json.Decoder is configured to reject any line that is not a single
-		// JSON value (e.g. trailing garbage), matching json.Unmarshal's
-		// strictness for the corruption-detection tests.
+		// unmarshalProbe uses json.Unmarshal, which rejects any line that is not a
+		// single well-formed JSON value (e.g. trailing garbage), giving the same
+		// strictness the corruption-detection tests expect.
 		probe := validationProbeForFields(opts.RequiredFields)
 		if err := unmarshalProbe(line, probe); err != nil {
 			errorLines++
