@@ -4992,10 +4992,18 @@ func (m Model) renderListWithHeader() string {
 		availableHeight = m.height - 3 // fallback
 	}
 
+	// Width available to this (single-column) body. When the shortcuts sidebar
+	// is open it reserves its own column, so the header/page lines and the final
+	// clamp below must shrink to the reserved width — otherwise the body is drawn
+	// at the full terminal width and JoinHorizontal(body, sidebar) in View()
+	// overflows past the terminal edge and wraps back into the panes (#168). The
+	// list itself was already sized to mainContentWidth() in applyContentSizing.
+	bodyWidth := m.mainContentWidth()
+
 	// Render column header.
 	//
 	// Clamp to a single line (Height/MaxHeight 1): the header strings below are
-	// ~65 columns wide, so on a narrow terminal (m.width-2 < header width) they
+	// ~65 columns wide, so on a narrow terminal (bodyWidth-2 < header width) they
 	// would otherwise wrap to a 2nd line, misaligning columns AND shifting every
 	// list row down by a line, which broke the click->row mapping in
 	// handleLeftClick (bv-164). See listChromeLines().
@@ -5003,7 +5011,7 @@ func (m Model) renderListWithHeader() string {
 		Background(t.Primary).
 		Foreground(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#282A36"}).
 		Bold(true).
-		Width(m.width - 2).
+		Width(bodyWidth - 2).
 		Height(1).
 		MaxHeight(1)
 
@@ -5040,7 +5048,7 @@ func (m Model) renderListWithHeader() string {
 	pageStyle := t.Renderer.NewStyle().
 		Foreground(t.Secondary).
 		Align(lipgloss.Right).
-		Width(m.width - 2)
+		Width(bodyWidth - 2)
 
 	// Combine header with page info on the right
 	headerLine := lipgloss.JoinHorizontal(lipgloss.Top,
@@ -5064,9 +5072,11 @@ func (m Model) renderListWithHeader() string {
 	// Header (1) + List + PageLine (1) must fit in bodyHeight
 	content := lipgloss.JoinVertical(lipgloss.Left, headerLine, listView, pageLine)
 
-	// Force exact height to prevent overflow
+	// Force exact width/height to prevent overflow. Width is the reserved body
+	// width (mainContentWidth) so the appended shortcuts sidebar fits within the
+	// terminal rather than overflowing it (#168).
 	return lipgloss.NewStyle().
-		Width(m.width).
+		Width(bodyWidth).
 		Height(bodyHeight).
 		MaxHeight(bodyHeight).
 		Render(content)
@@ -7073,13 +7083,20 @@ func (m *Model) applyRecipe(r *recipe.Recipe) {
 	m.updateViewportContent()
 }
 
-// shortcutsSidebarGap is the number of separator columns reserved between the
-// main body and the shortcuts sidebar when it is visible. The body is sized down
-// by the sidebar's fixed width plus this gap so that
-// JoinHorizontal(body, sidebar) never exceeds m.width and forces the terminal to
-// wrap the overflow back into the panes (bv-3qi5 / issue #168). The sidebar is
-// itself bordered, so no extra gap is currently needed.
-const shortcutsSidebarGap = 0
+// shortcutsSidebarGap is the number of extra columns the rendered shortcuts
+// sidebar occupies beyond its content Width(). The body is sized down by the
+// sidebar's content width PLUS this gap so that JoinHorizontal(body, sidebar)
+// never exceeds m.width — otherwise the terminal wraps the overflow back into
+// the panes (bv-3qi5 / issue #168).
+//
+// The sidebar's View() wraps its content in a lipgloss box with
+// Width(s.width) and a RoundedBorder(). In lipgloss, Width() sets the *content*
+// width and the border is drawn *outside* it, so the rendered sidebar is
+// s.width + 2 cells wide (one border column on each side). The reserved column
+// must therefore include those 2 border columns, hence gap = 2. (The earlier
+// value of 0 left the joined layout 2 cells over the terminal width, so the
+// sidebar still overflowed by its right border on a real TTY.)
+const shortcutsSidebarGap = 2
 
 // mainContentWidth returns the width available to the main body (list/detail
 // panes and full-screen views). When the shortcuts sidebar is open it reserves
