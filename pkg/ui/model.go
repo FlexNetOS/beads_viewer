@@ -2778,6 +2778,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle shortcuts sidebar toggle (; or F2) - bv-3qi5
 		if (msg.String() == ";" || msg.String() == "f2") && m.list.FilterState() != list.Filtering {
 			m.showShortcutsSidebar = !m.showShortcutsSidebar
+			// Reflow the main panes for the new content width so the sidebar
+			// reserves its own column instead of overflowing/wrapping into the
+			// panes (#168). Without this the body stays sized to the full width
+			// and the appended sidebar pushes lines past the terminal edge.
+			m.applyContentSizing()
 			if m.showShortcutsSidebar {
 				m.shortcutsSidebar.ResetScroll()
 				m.statusMsg = "Shortcuts sidebar: ; hide | ctrl+j/k scroll"
@@ -3670,52 +3675,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.isSplitView = msg.Width > SplitViewThreshold
 		m.ready = true
-		bodyHeight := m.height - 1 // keep 1 row for footer
-		if bodyHeight < 5 {
-			bodyHeight = 5
-		}
-
-		if m.isSplitView {
-			// Calculate dimensions accounting for 2 panels with borders(2)+padding(2) = 4 overhead each
-			// Total overhead = 8
-			availWidth := msg.Width - 8
-			if availWidth < 10 {
-				availWidth = 10
-			}
-
-			// Use configurable split ratio (default 0.4, adjustable via [ and ])
-			listInnerWidth := int(float64(availWidth) * m.splitPaneRatio)
-			detailInnerWidth := availWidth - listInnerWidth
-
-			// listHeight fits header (1) + page line (1) inside a panel with Border (2)
-			listHeight := bodyHeight - 4
-			if listHeight < 3 {
-				listHeight = 3
-			}
-
-			m.list.SetSize(listInnerWidth, listHeight)
-			m.viewport = viewport.New(detailInnerWidth, bodyHeight-2) // Account for border
-
-			m.renderer.SetWidthWithTheme(detailInnerWidth, m.theme)
-		} else {
-			listHeight := bodyHeight - 2
-			if listHeight < 3 {
-				listHeight = 3
-			}
-			m.list.SetSize(msg.Width, listHeight)
-			m.viewport = viewport.New(msg.Width, bodyHeight-1)
-
-			// Update renderer for full width
-			m.renderer.SetWidthWithTheme(msg.Width, m.theme)
-		}
-
-		m.updateListDelegate()
-
-		// Resize label dashboard table and modal overlay sizing
-		m.labelDashboard.SetSize(m.width, bodyHeight)
-
-		m.insightsPanel.SetSize(m.width, bodyHeight)
-		m.updateViewportContent()
+		m.applyContentSizing()
 	}
 
 	// Update list for navigation, but NOT for WindowSizeMsg
@@ -7113,6 +7073,94 @@ func (m *Model) applyRecipe(r *recipe.Recipe) {
 	m.updateViewportContent()
 }
 
+// shortcutsSidebarGap is the number of separator columns reserved between the
+// main body and the shortcuts sidebar when it is visible. The body is sized down
+// by the sidebar's fixed width plus this gap so that
+// JoinHorizontal(body, sidebar) never exceeds m.width and forces the terminal to
+// wrap the overflow back into the panes (bv-3qi5 / issue #168). The sidebar is
+// itself bordered, so no extra gap is currently needed.
+const shortcutsSidebarGap = 0
+
+// mainContentWidth returns the width available to the main body (list/detail
+// panes and full-screen views). When the shortcuts sidebar is open it reserves
+// the sidebar's column so the body is laid out into the remaining width instead
+// of being drawn full-width and then overflowing once the sidebar is appended.
+//
+// It never returns less than a small floor so downstream sizing math stays
+// positive on very narrow terminals (where the sidebar realistically can't be
+// shown anyway, but we must not produce negative widths).
+func (m Model) mainContentWidth() int {
+	w := m.width
+	if m.showShortcutsSidebar {
+		w -= m.shortcutsSidebar.Width() + shortcutsSidebarGap
+	}
+	if w < 20 {
+		w = 20
+	}
+	return w
+}
+
+// applyContentSizing (re)computes the list, viewport, renderer, and auxiliary
+// panel dimensions from the current m.width / m.height / m.isSplitView and the
+// current shortcuts-sidebar visibility. It is the single sizing path shared by
+// the WindowSizeMsg handler and the sidebar toggle so that opening/closing the
+// sidebar reflows the body immediately (without waiting for a terminal resize)
+// and never leaves the panes sized for a width the sidebar then overflows (#168).
+func (m *Model) applyContentSizing() {
+	bodyHeight := m.height - 1 // keep 1 row for footer
+	if bodyHeight < 5 {
+		bodyHeight = 5
+	}
+
+	// Width available to the main body, reserving the shortcuts sidebar column
+	// when it is open (#168) so the body never overflows once the sidebar is
+	// appended in View().
+	contentWidth := m.mainContentWidth()
+
+	if m.isSplitView {
+		// Calculate dimensions accounting for 2 panels with borders(2)+padding(2) = 4 overhead each
+		// Total overhead = 8
+		availWidth := contentWidth - 8
+		if availWidth < 10 {
+			availWidth = 10
+		}
+
+		// Use configurable split ratio (default 0.4, adjustable via [ and ])
+		listInnerWidth := int(float64(availWidth) * m.splitPaneRatio)
+		detailInnerWidth := availWidth - listInnerWidth
+
+		// listHeight fits header (1) + page line (1) inside a panel with Border (2)
+		listHeight := bodyHeight - 4
+		if listHeight < 3 {
+			listHeight = 3
+		}
+
+		m.list.SetSize(listInnerWidth, listHeight)
+		m.viewport = viewport.New(detailInnerWidth, bodyHeight-2) // Account for border
+
+		m.renderer.SetWidthWithTheme(detailInnerWidth, m.theme)
+	} else {
+		listHeight := bodyHeight - 2
+		if listHeight < 3 {
+			listHeight = 3
+		}
+		m.list.SetSize(contentWidth, listHeight)
+		m.viewport = viewport.New(contentWidth, bodyHeight-1)
+
+		// Update renderer for full width
+		m.renderer.SetWidthWithTheme(contentWidth, m.theme)
+	}
+
+	m.updateListDelegate()
+
+	// Resize label dashboard table and modal overlay sizing. These full-screen
+	// panels are drawn at full m.width (the sidebar does not currently overlay
+	// them), so they keep using m.width rather than the reserved content width.
+	m.labelDashboard.SetSize(m.width, bodyHeight)
+	m.insightsPanel.SetSize(m.width, bodyHeight)
+	m.updateViewportContent()
+}
+
 // recalculateSplitPaneSizes updates list and viewport dimensions after pane ratio changes
 func (m *Model) recalculateSplitPaneSizes() {
 	if !m.isSplitView {
@@ -7124,8 +7172,10 @@ func (m *Model) recalculateSplitPaneSizes() {
 		bodyHeight = 5
 	}
 
-	// Calculate dimensions accounting for 2 panels with borders(2)+padding(2) = 4 overhead each
-	availWidth := m.width - 8
+	// Calculate dimensions accounting for 2 panels with borders(2)+padding(2) = 4 overhead each.
+	// Reserve the shortcuts sidebar column when it is open (#168) so the joined
+	// body+sidebar fits the terminal.
+	availWidth := m.mainContentWidth() - 8
 	if availWidth < 10 {
 		availWidth = 10
 	}
