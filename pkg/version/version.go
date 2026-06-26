@@ -57,6 +57,21 @@ func isUsableVersion(v string) bool {
 	if v == "" || v == "v" || v == "v." {
 		return false
 	}
+	// Reject un-substituted build templates such as "${version}",
+	// "v${version}", "{{.Version}}", or "v{{.Version}}". A real semantic
+	// version never contains '$', '{', or '}', so any occurrence means a
+	// release pipeline failed to expand its version template into the ldflag.
+	//
+	// The v0.17.0 Windows artifact shipped with the literal placeholder
+	// "${version}" baked in. Previously that value passed this check (it is
+	// non-empty and is not "", "v", or "v."), so it was accepted as the
+	// version — which broke "bv --version" and drove a permanent false
+	// "update available" banner (#174). By rejecting it here, resolution
+	// falls through to debug.ReadBuildInfo and finally the hardcoded
+	// `fallback`, so a mis-injected build still reports a sane version.
+	if strings.ContainsAny(v, "${}") {
+		return false
+	}
 	return true
 }
 
