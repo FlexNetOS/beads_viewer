@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"slices"
 	"sort"
@@ -67,6 +68,7 @@ var rootHelpSections = []flagHelpSection{
 				"db",
 				"update",
 				"check-update",
+				"update-dry-run",
 				"rollback",
 				"yes",
 				"format",
@@ -75,6 +77,7 @@ var rootHelpSections = []flagHelpSection{
 				"profile-json",
 				"no-cache",
 				"force-full-analysis",
+				"theme",
 				"background-mode",
 				"no-background-mode",
 			)
@@ -629,9 +632,65 @@ func rewriteAgentIntentCommand(args []string) ([]string, bool) {
 		return append([]string{"--robot-capacity"}, rewriteAgentIntentFlagAliases(rest, "capacity")...), true
 	case "burndown":
 		return rewriteRobotValueIntent(rest, "burndown", "", "--robot-burndown", "current"), true
+	case "upgrade", "self-update", "selfupdate":
+		return rewriteUpgradeIntent(rest), true
 	default:
 		return nil, false
 	}
+}
+
+// rewriteUpgradeIntent maps the ergonomic `bv upgrade` subcommand (mirroring
+// `br upgrade` and `cass upgrade`) onto bv's existing self-update flags. The
+// pure translation keeps the network-facing update machinery in pkg/updater
+// while giving agents and humans a discoverable, sibling-consistent verb.
+//
+//	bv upgrade                -> --update
+//	bv upgrade --yes/-y       -> --update --yes
+//	bv upgrade --check        -> --check-update   (is a newer version available?)
+//	bv upgrade --dry-run      -> --update-dry-run (what would be downloaded/verified)
+//	bv upgrade --rollback     -> --rollback       (restore the previous binary)
+//
+// Bare-word aliases (check/dry-run/rollback/yes/force) are accepted too so the
+// command reads naturally either way. Unrecognized tokens are passed through so
+// cobra reports genuine typos instead of silently ignoring them.
+func rewriteUpgradeIntent(rest []string) []string {
+	mode := "update"
+	yes := false
+	passthrough := make([]string, 0, len(rest))
+	for _, arg := range rest {
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "check", "--check", "check-update", "--check-update":
+			if mode == "update" {
+				mode = "check"
+			}
+		case "dry-run", "--dry-run", "dryrun", "--dryrun":
+			if mode == "update" {
+				mode = "dry-run"
+			}
+		case "rollback", "--rollback":
+			mode = "rollback"
+		case "yes", "--yes", "-y", "force", "--force":
+			yes = true
+		default:
+			passthrough = append(passthrough, arg)
+		}
+	}
+
+	var out []string
+	switch mode {
+	case "check":
+		out = []string{"--check-update"}
+	case "dry-run":
+		out = []string{"--update-dry-run"}
+	case "rollback":
+		out = []string{"--rollback"}
+	default:
+		out = []string{"--update"}
+		if yes {
+			out = append(out, "--yes")
+		}
+	}
+	return append(out, passthrough...)
 }
 
 func rewriteCanonicalRobotCommandIntent(command string, rest []string) ([]string, bool) {
@@ -996,6 +1055,9 @@ func agentIntentCommandNames() []string {
 		"forecast",
 		"capacity",
 		"burndown",
+		"upgrade",
+		"self-update",
+		"selfupdate",
 	}
 	for name := range primaryRobotFlagNames() {
 		names = append(names, name)
@@ -1358,6 +1420,7 @@ func main() {
 	updateFlag := flag.Bool("update", false, "Update bv to the latest version")
 	checkUpdateFlag := flag.Bool("check-update", false, "Check if a new version is available")
 	rollbackFlag := flag.Bool("rollback", false, "Rollback to the previous version (from backup)")
+	updateDryRunFlag := flag.Bool("update-dry-run", false, "Show what an update would do without installing (use via 'bv upgrade --dry-run')")
 	yesFlag := flag.Bool("yes", false, "Skip confirmation prompts (use with --update)")
 	exportFile := flag.String("export-md", "", "Export issues to a Markdown file (e.g., report.md)")
 	robotHelp := flag.Bool("robot-help", false, "Show AI agent help")
@@ -1515,6 +1578,9 @@ func main() {
 	debugRender := flag.String("debug-render", "", "Render a view and output to file (views: insights, board)")
 	debugWidth := flag.Int("debug-width", 180, "Width for debug render")
 	debugHeight := flag.Int("debug-height", 50, "Height for debug render")
+	// Explicit light/dark palette selection for terminals where background
+	// auto-detection fails, e.g. over SSH or inside tmux (bv-128)
+	themeFlag := flag.String("theme", "", "Color theme: light, dark, or auto (default: detect terminal background)")
 	// Experimental background snapshot worker (bv-o11l)
 	backgroundMode := flag.Bool("background-mode", false, "Enable experimental background snapshot loading (TUI only)")
 	noBackgroundMode := flag.Bool("no-background-mode", false, "Disable experimental background snapshot loading (TUI only)")
@@ -1621,6 +1687,12 @@ func main() {
 		NotReadyLabels:          robotNotReadyLabels,
 	})
 	rootCmd := newRootCommand(func() error {
+		// Resolve and pin the color theme before anything renders, so every
+		// adaptive color — package-global styles, per-model renderers, and
+		// glamour markdown — agrees on light vs dark. Precedence:
+		// --theme > BV_THEME > ~/.config/bv/config.yaml > auto-detect. (bv-128)
+		ui.SetThemeOverride(effectiveThemePreference(*themeFlag, flag.CommandLine.Changed("theme"), os.Stderr))
+
 		modifierRules := []modifierFlagRule{
 			{modifier: "robot-diff", requires: []string{"diff-since"}},
 			{modifier: "robot-search", requires: []string{"search"}},
@@ -1873,6 +1945,39 @@ func main() {
 			} else {
 				fmt.Printf("bv is up to date (version %s)\n", version.Version)
 			}
+			os.Exit(0)
+		}
+
+		// Handle --update-dry-run (bv upgrade --dry-run): report exactly what an
+		// update would fetch/verify/install without touching the running binary.
+		if *updateDryRunFlag {
+			release, err := updater.GetLatestRelease()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error fetching release info: %v\n", err)
+				os.Exit(1)
+			}
+
+			newVersion := release.TagName
+			if !updater.IsNewerThanCurrent(newVersion) {
+				fmt.Printf("bv is already up to date (version %s)\n", version.Version)
+				os.Exit(0)
+			}
+
+			fmt.Printf("[dry-run] Would update bv from %s to %s\n", version.Version, newVersion)
+			if asset := release.FindPlatformAsset(); asset != nil {
+				fmt.Printf("[dry-run] Would download %s (%d bytes) for %s/%s\n",
+					asset.Name, asset.Size, runtime.GOOS, runtime.GOARCH)
+				fmt.Printf("[dry-run] From: %s\n", asset.BrowserDownloadURL)
+			} else {
+				fmt.Fprintf(os.Stderr, "[dry-run] No matching release asset found for %s/%s\n",
+					runtime.GOOS, runtime.GOARCH)
+			}
+			if checksum := release.FindChecksumAsset(); checksum != nil {
+				fmt.Printf("[dry-run] Would verify SHA-256 checksum via %s\n", checksum.Name)
+			} else {
+				fmt.Println("[dry-run] Warning: no checksum file found; download integrity could not be verified")
+			}
+			fmt.Println("[dry-run] No changes made. Run 'bv upgrade' to apply.")
 			os.Exit(0)
 		}
 
@@ -5490,6 +5595,76 @@ func countEdges(issues []model.Issue) int {
 		}
 	}
 	return count
+}
+
+// canonicalTheme maps user input to one of the recognized theme names
+// ("light", "dark", "auto"), ignoring case and surrounding whitespace.
+// Anything unrecognized (including empty) yields "".
+func canonicalTheme(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "light":
+		return "light"
+	case "dark":
+		return "dark"
+	case "auto":
+		return "auto"
+	}
+	return ""
+}
+
+// effectiveThemePreference resolves the color-theme preference with the
+// precedence: --theme flag > BV_THEME env var > `theme:` key in
+// ~/.config/bv/config.yaml > "" (auto-detect). An explicitly passed but
+// unrecognized --theme value warns on warnTo and resolves to "auto" — the flag
+// level is honored rather than silently falling through to a lower-precedence
+// source the user did not intend. (bv-128)
+func effectiveThemePreference(flagVal string, flagSet bool, warnTo io.Writer) string {
+	if flagSet {
+		if v := canonicalTheme(flagVal); v != "" {
+			return v
+		}
+		if warnTo != nil {
+			fmt.Fprintf(warnTo, "Warning: unknown --theme value %q (expected light, dark, or auto); using auto-detection\n", flagVal)
+		}
+		return "auto"
+	}
+	if v := canonicalTheme(os.Getenv("BV_THEME")); v != "" {
+		return v
+	}
+	if raw, ok := loadThemeFromUserConfig(); ok {
+		if v := canonicalTheme(raw); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// loadThemeFromUserConfig reads the top-level `theme:` key from
+// ~/.config/bv/config.yaml, returning (value, true) when present and
+// non-empty. Value validation is canonicalTheme's job. (bv-128)
+func loadThemeFromUserConfig() (string, bool) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil || homeDir == "" {
+		return "", false
+	}
+	configPath := filepath.Join(homeDir, ".config", "bv", "config.yaml")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", false
+	}
+
+	var cfg struct {
+		Theme string `yaml:"theme"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", false
+	}
+	theme := strings.TrimSpace(cfg.Theme)
+	if theme == "" {
+		return "", false
+	}
+	return theme, true
 }
 
 func loadBackgroundModeFromUserConfig() (bool, bool) {
